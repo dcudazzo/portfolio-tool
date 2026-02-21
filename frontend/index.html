@@ -1,0 +1,972 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Portfolio Tracker</title>
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=DM+Mono:wght@300;400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0a0a0f;
+    --surface: #12121a;
+    --surface2: #1a1a26;
+    --border: #2a2a3a;
+    --accent: #7c6fff;
+    --accent2: #ff6f91;
+    --green: #4fffb0;
+    --yellow: #ffe46f;
+    --red: #ff6f6f;
+    --text: #e8e8f0;
+    --muted: #6b6b8a;
+    --font-display: 'Syne', sans-serif;
+    --font-mono: 'DM Mono', monospace;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font-mono);
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  /* Background grid */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background-image:
+      linear-gradient(rgba(124,111,255,0.03) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(124,111,255,0.03) 1px, transparent 1px);
+    background-size: 40px 40px;
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  .app {
+    position: relative;
+    z-index: 1;
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 32px 20px 80px;
+  }
+
+  /* Loading overlay */
+  .loading-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(10,10,15,0.7);
+    z-index: 1000;
+    align-items: center;
+    justify-content: center;
+  }
+  .loading-overlay.active { display: flex; }
+  .spinner {
+    width: 40px; height: 40px;
+    border: 3px solid var(--border);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* Header */
+  header {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    margin-bottom: 40px;
+    padding-bottom: 24px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .logo {
+    font-family: var(--font-display);
+    font-size: 28px;
+    font-weight: 800;
+    letter-spacing: -1px;
+    background: linear-gradient(135deg, var(--accent), var(--accent2));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+
+  .logo span { font-weight: 400; opacity: 0.6; }
+
+  .total-value {
+    text-align: right;
+  }
+
+  .total-value .label {
+    font-size: 11px;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    margin-bottom: 4px;
+  }
+
+  .total-value .amount {
+    font-family: var(--font-display);
+    font-size: 32px;
+    font-weight: 700;
+    letter-spacing: -1px;
+  }
+
+  .total-value .gain {
+    font-size: 12px;
+    color: var(--green);
+    margin-top: 2px;
+  }
+
+  /* Tabs */
+  .tabs {
+    display: flex;
+    gap: 4px;
+    margin-bottom: 32px;
+    background: var(--surface);
+    padding: 4px;
+    border-radius: 12px;
+    border: 1px solid var(--border);
+  }
+
+  .tab {
+    flex: 1;
+    padding: 10px;
+    border: none;
+    background: transparent;
+    color: var(--muted);
+    font-family: var(--font-mono);
+    font-size: 12px;
+    cursor: pointer;
+    border-radius: 8px;
+    transition: all 0.2s;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+  }
+
+  .tab.active {
+    background: var(--surface2);
+    color: var(--text);
+    border: 1px solid var(--border);
+  }
+
+  .tab:hover:not(.active) { color: var(--text); }
+
+  .panel { display: none; }
+  .panel.active { display: block; }
+
+  /* Cards */
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 24px;
+    margin-bottom: 16px;
+  }
+
+  .card-title {
+    font-family: var(--font-display);
+    font-size: 13px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    color: var(--muted);
+    margin-bottom: 20px;
+  }
+
+  /* ETF Row */
+  .etf-list { display: flex; flex-direction: column; gap: 12px; }
+
+  .etf-row {
+    display: grid;
+    grid-template-columns: 1fr auto auto;
+    gap: 12px;
+    align-items: center;
+    padding: 16px;
+    background: var(--surface2);
+    border-radius: 12px;
+    border: 1px solid var(--border);
+    transition: border-color 0.2s;
+  }
+
+  .etf-row:hover { border-color: var(--accent); }
+
+  .etf-name {
+    font-family: var(--font-display);
+    font-size: 14px;
+    font-weight: 600;
+    margin-bottom: 2px;
+  }
+
+  .etf-meta { font-size: 11px; color: var(--muted); }
+
+  .etf-value {
+    text-align: right;
+  }
+
+  .etf-value .val {
+    font-size: 16px;
+    font-weight: 500;
+  }
+
+  .etf-value .gain-pct {
+    font-size: 11px;
+    margin-top: 2px;
+  }
+
+  .positive { color: var(--green); }
+  .negative { color: var(--red); }
+  .neutral { color: var(--yellow); }
+
+  /* Bar chart */
+  .bar-section { margin-top: 8px; }
+
+  .bar-row {
+    display: grid;
+    grid-template-columns: 140px 1fr 60px 60px;
+    gap: 12px;
+    align-items: center;
+    margin-bottom: 10px;
+    font-size: 12px;
+  }
+
+  .bar-label { color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+  .bar-track {
+    position: relative;
+    height: 6px;
+    background: var(--border);
+    border-radius: 3px;
+    overflow: visible;
+  }
+
+  .bar-fill {
+    height: 100%;
+    border-radius: 3px;
+    transition: width 0.6s cubic-bezier(0.4,0,0.2,1);
+    position: relative;
+  }
+
+  .bar-target-line {
+    position: absolute;
+    top: -4px;
+    width: 2px;
+    height: 14px;
+    background: white;
+    border-radius: 1px;
+    opacity: 0.5;
+  }
+
+  .bar-pct { text-align: right; }
+  .bar-delta { text-align: right; font-size: 11px; }
+
+  /* Rebalancing */
+  .input-group {
+    display: flex;
+    gap: 12px;
+    margin-bottom: 24px;
+    align-items: flex-end;
+  }
+
+  .input-wrap {
+    flex: 1;
+  }
+
+  .input-wrap label {
+    display: block;
+    font-size: 11px;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    margin-bottom: 8px;
+  }
+
+  .input-wrap input, .input-wrap select {
+    width: 100%;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    color: var(--text);
+    font-family: var(--font-mono);
+    font-size: 16px;
+    padding: 12px 16px;
+    border-radius: 10px;
+    outline: none;
+    transition: border-color 0.2s;
+  }
+
+  .input-wrap input:focus, .input-wrap select:focus {
+    border-color: var(--accent);
+  }
+
+  .btn {
+    background: linear-gradient(135deg, var(--accent), var(--accent2));
+    color: white;
+    border: none;
+    font-family: var(--font-display);
+    font-size: 14px;
+    font-weight: 700;
+    padding: 12px 28px;
+    border-radius: 10px;
+    cursor: pointer;
+    letter-spacing: 0.5px;
+    transition: opacity 0.2s;
+    white-space: nowrap;
+  }
+
+  .btn:hover { opacity: 0.85; }
+
+  .rebal-result { display: flex; flex-direction: column; gap: 10px; }
+
+  .rebal-row {
+    display: grid;
+    grid-template-columns: 1fr auto auto;
+    gap: 16px;
+    align-items: center;
+    padding: 14px 16px;
+    background: var(--surface2);
+    border-radius: 10px;
+    border: 1px solid var(--border);
+  }
+
+  .rebal-etf { font-size: 13px; font-family: var(--font-display); font-weight: 600; }
+  .rebal-action { font-size: 12px; color: var(--muted); }
+  .rebal-amount { font-size: 16px; font-weight: 500; font-family: var(--font-display); }
+  .rebal-shares { font-size: 11px; color: var(--muted); text-align: right; }
+
+  .rebal-skip { opacity: 0.4; }
+
+  .note-box {
+    background: rgba(124,111,255,0.08);
+    border: 1px solid rgba(124,111,255,0.2);
+    border-radius: 10px;
+    padding: 14px 16px;
+    font-size: 12px;
+    color: var(--muted);
+    margin-top: 16px;
+    line-height: 1.6;
+  }
+
+  /* Performance tracker */
+  .snapshot-form {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: 12px;
+    margin-bottom: 16px;
+  }
+
+  .snapshot-form .input-wrap input {
+    font-size: 14px;
+  }
+
+  .history-list { display: flex; flex-direction: column; gap: 8px; }
+
+  .history-row {
+    display: grid;
+    grid-template-columns: 100px 1fr auto auto;
+    gap: 12px;
+    align-items: center;
+    padding: 12px 16px;
+    background: var(--surface2);
+    border-radius: 10px;
+    border: 1px solid var(--border);
+    font-size: 13px;
+  }
+
+  .history-date { color: var(--muted); font-size: 11px; }
+  .history-value { font-family: var(--font-display); font-weight: 600; font-size: 16px; }
+  .history-invested { font-size: 11px; color: var(--muted); }
+  .history-return { text-align: right; }
+  .history-delete { background: none; border: none; color: var(--muted); cursor: pointer; font-size: 16px; padding: 0 4px; }
+  .history-delete:hover { color: var(--red); }
+
+  /* Mini chart */
+  .mini-chart {
+    width: 100%;
+    height: 120px;
+    margin-top: 16px;
+  }
+
+  .empty-state {
+    text-align: center;
+    padding: 40px;
+    color: var(--muted);
+    font-size: 13px;
+    line-height: 1.8;
+  }
+
+  /* Target editor */
+  .target-grid {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 12px;
+    align-items: center;
+    margin-bottom: 8px;
+    font-size: 13px;
+  }
+
+  .target-grid input[type=range] {
+    width: 100%;
+    accent-color: var(--accent);
+  }
+
+  .target-sum {
+    font-size: 12px;
+    text-align: right;
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px solid var(--border);
+  }
+
+  .chips {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-bottom: 16px;
+  }
+
+  .chip {
+    padding: 6px 12px;
+    border-radius: 20px;
+    font-size: 11px;
+    border: 1px solid var(--border);
+    background: var(--surface2);
+    cursor: pointer;
+    transition: all 0.2s;
+    font-family: var(--font-mono);
+  }
+
+  .chip:hover, .chip.active { border-color: var(--accent); color: var(--accent); }
+
+  /* Colors per ETF */
+  .c0 { background: linear-gradient(90deg, #7c6fff, #9b8fff); }
+  .c1 { background: linear-gradient(90deg, #4fffb0, #3dd9a0); }
+  .c2 { background: linear-gradient(90deg, #ff6f91, #e05878); }
+  .c3 { background: linear-gradient(90deg, #ffe46f, #e0c840); }
+  .c4 { background: linear-gradient(90deg, #6fb5ff, #4a9fe0); }
+
+  /* Toast notification */
+  .toast {
+    position: fixed;
+    bottom: 24px;
+    right: 24px;
+    padding: 12px 20px;
+    border-radius: 10px;
+    font-size: 13px;
+    font-family: var(--font-mono);
+    z-index: 2000;
+    opacity: 0;
+    transform: translateY(10px);
+    transition: all 0.3s;
+  }
+  .toast.show { opacity: 1; transform: translateY(0); }
+  .toast.success { background: rgba(79,255,176,0.15); border: 1px solid var(--green); color: var(--green); }
+  .toast.error { background: rgba(255,111,111,0.15); border: 1px solid var(--red); color: var(--red); }
+
+  @media (max-width: 600px) {
+    .bar-row { grid-template-columns: 100px 1fr 50px 50px; font-size: 11px; }
+    .history-row { grid-template-columns: 80px 1fr auto; }
+    .history-invested { display: none; }
+    header { flex-direction: column; gap: 16px; align-items: flex-start; }
+  }
+</style>
+</head>
+<body>
+<div class="loading-overlay" id="loading"><div class="spinner"></div></div>
+<div class="toast" id="toast"></div>
+
+<div class="app">
+
+  <header>
+    <div>
+      <div class="logo">Portfolio<span>Tracker</span></div>
+      <div style="font-size:11px;color:var(--muted);margin-top:4px;letter-spacing:1px;">FINECO · ETF DASHBOARD</div>
+    </div>
+    <div class="total-value">
+      <div class="label">Valorizzazione</div>
+      <div class="amount" id="header-total">&euro; 0</div>
+      <div class="gain" id="header-gain">&mdash;</div>
+    </div>
+  </header>
+
+  <div class="tabs">
+    <button class="tab active" data-tab="dashboard" onclick="switchTab('dashboard', this)">Dashboard</button>
+    <button class="tab" data-tab="rebalance" onclick="switchTab('rebalance', this)">Ribilanciamento</button>
+    <button class="tab" data-tab="performance" onclick="switchTab('performance', this)">Performance</button>
+    <button class="tab" data-tab="settings" onclick="switchTab('settings', this)">Impostazioni</button>
+  </div>
+
+  <!-- DASHBOARD -->
+  <div id="tab-dashboard" class="panel active">
+    <div class="card">
+      <div class="card-title">Portafoglio attuale</div>
+      <div class="etf-list" id="etf-list"></div>
+    </div>
+    <div class="card">
+      <div class="card-title">Pesi &mdash; Attuale vs Target</div>
+      <div class="bar-section" id="bar-section"></div>
+      <div style="font-size:11px;color:var(--muted);margin-top:16px;">
+        &#9646; Barra colorata = peso attuale &nbsp;|&nbsp; &#9613;Linea bianca = target
+      </div>
+    </div>
+  </div>
+
+  <!-- RIBILANCIAMENTO -->
+  <div id="tab-rebalance" class="panel">
+    <div class="card">
+      <div class="card-title">Calcolatore ribilanciamento</div>
+      <div class="chips">
+        <div class="chip" onclick="setAmount(1800, this)">&euro; 1.800</div>
+        <div class="chip" onclick="setAmount(2400, this)">&euro; 2.400</div>
+        <div class="chip" onclick="setAmount(1200, this)">&euro; 1.200</div>
+      </div>
+      <div class="input-group">
+        <div class="input-wrap">
+          <label>Importo da investire (&euro;)</label>
+          <input type="number" id="rebal-amount" value="1800" min="0" step="100" oninput="calcRebalance()">
+        </div>
+        <div class="input-wrap" style="flex:0.5">
+          <label>Strategia</label>
+          <select id="rebal-strategy" onchange="calcRebalance()">
+            <option value="gap">Colma i gap</option>
+            <option value="target">Solo target</option>
+          </select>
+        </div>
+      </div>
+      <div class="rebal-result" id="rebal-result"></div>
+      <div class="note-box" id="rebal-note"></div>
+    </div>
+  </div>
+
+  <!-- PERFORMANCE -->
+  <div id="tab-performance" class="panel">
+    <div class="card">
+      <div class="card-title">Aggiungi snapshot</div>
+      <div class="snapshot-form">
+        <div class="input-wrap">
+          <label>Data</label>
+          <input type="date" id="snap-date">
+        </div>
+        <div class="input-wrap">
+          <label>Valorizzazione (&euro;)</label>
+          <input type="number" id="snap-value" placeholder="17975" step="1">
+        </div>
+        <div class="input-wrap">
+          <label>Versato totale (&euro;)</label>
+          <input type="number" id="snap-invested" placeholder="16434" step="1">
+        </div>
+      </div>
+      <button class="btn" onclick="addSnapshot()">+ Aggiungi snapshot</button>
+    </div>
+    <div class="card">
+      <div class="card-title">Storico performance</div>
+      <div id="history-list"></div>
+      <svg class="mini-chart" id="mini-chart" viewBox="0 0 800 120" preserveAspectRatio="none"></svg>
+    </div>
+  </div>
+
+  <!-- IMPOSTAZIONI -->
+  <div id="tab-settings" class="panel">
+    <div class="card">
+      <div class="card-title">Aggiorna valori portafoglio</div>
+      <div id="settings-etf-list"></div>
+      <button class="btn" style="margin-top:16px;" onclick="saveSettings()">Salva modifiche</button>
+    </div>
+    <div class="card">
+      <div class="card-title">Target allocation (%)</div>
+      <div id="target-editor"></div>
+      <div class="target-sum" id="target-sum"></div>
+      <button class="btn" style="margin-top:16px;" onclick="saveTargets()">Salva target</button>
+    </div>
+  </div>
+
+</div>
+
+<script>
+// -- CONFIG ------------------------------------------------------------------
+const API_BASE = '/api';
+
+// -- STATE -------------------------------------------------------------------
+const ETF_COLORS = ['c0','c1','c2','c3','c4'];
+let portfolio = null;   // cached /api/portfolio response
+let snapshots = [];      // cached /api/snapshots response
+
+// -- UI HELPERS --------------------------------------------------------------
+const fmt = (n, d=0) => {
+  const parts = n.toFixed(d).split('.');
+  parts[0] = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+  return '\u20AC ' + (d > 0 ? parts.join(',') : parts[0]);
+};
+const pct = n => (n > 0 ? '+' : '') + n.toFixed(2) + '%';
+
+function showLoading() { document.getElementById('loading').classList.add('active'); }
+function hideLoading() { document.getElementById('loading').classList.remove('active'); }
+
+function showToast(msg, type = 'success') {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.className = 'toast ' + type;
+  requestAnimationFrame(() => el.classList.add('show'));
+  setTimeout(() => el.classList.remove('show'), 2500);
+}
+
+// -- API LAYER ---------------------------------------------------------------
+async function api(path, opts = {}) {
+  const url = API_BASE + path;
+  const config = { headers: { 'Content-Type': 'application/json' }, ...opts };
+  try {
+    const res = await fetch(url, config);
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: res.statusText }));
+      throw new Error(err.detail || res.statusText);
+    }
+    if (res.status === 204) return null;
+    return await res.json();
+  } catch (e) {
+    showToast(e.message, 'error');
+    throw e;
+  }
+}
+
+async function fetchPortfolio() {
+  portfolio = await api('/portfolio');
+  return portfolio;
+}
+
+async function fetchSnapshots() {
+  snapshots = await api('/snapshots');
+  return snapshots;
+}
+
+// -- TABS --------------------------------------------------------------------
+function switchTab(name, btn) {
+  document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.getElementById('tab-' + name).classList.add('active');
+  btn.classList.add('active');
+  if (name === 'dashboard') loadDashboard();
+  if (name === 'rebalance') { loadDashboard().then(() => calcRebalance()); }
+  if (name === 'performance') loadPerformance();
+  if (name === 'settings') loadSettings();
+}
+
+// -- DASHBOARD ---------------------------------------------------------------
+async function loadDashboard() {
+  showLoading();
+  try {
+    await fetchPortfolio();
+    renderDashboard();
+  } finally {
+    hideLoading();
+  }
+}
+
+function renderDashboard() {
+  if (!portfolio) return;
+  const p = portfolio;
+
+  document.getElementById('header-total').textContent = fmt(p.total_value);
+  const gainClass = p.total_gain_eur >= 0 ? 'positive' : 'negative';
+  document.getElementById('header-gain').innerHTML =
+    `<span class="${gainClass}">${fmt(p.total_gain_eur, 2)} (${pct(p.total_gain_pct)})</span>`;
+
+  // ETF list
+  const list = document.getElementById('etf-list');
+  list.innerHTML = p.etfs.map((e, i) => `
+    <div class="etf-row">
+      <div>
+        <div class="etf-name">${e.name}</div>
+        <div class="etf-meta">${e.ticker} · ${e.qty} quote · PMC ${e.pmc.toFixed(2)}</div>
+      </div>
+      <div class="etf-value">
+        <div class="val">${fmt(e.value)}</div>
+        <div class="gain-pct ${e.gain_pct >= 0 ? 'positive' : 'negative'}">${pct(e.gain_pct)}</div>
+      </div>
+      <div style="font-size:11px;color:var(--muted);text-align:right">
+        ${e.weight_pct.toFixed(1)}%
+      </div>
+    </div>
+  `).join('');
+
+  // Bars
+  const bars = document.getElementById('bar-section');
+  bars.innerHTML = p.etfs.map((e, i) => {
+    const delta = e.delta_pct;
+    const deltaStr = (delta > 0 ? '+' : '') + delta.toFixed(1) + '%';
+    const col = ETF_COLORS[i];
+    return `<div class="bar-row">
+      <div class="bar-label" title="${e.name}">${e.name}</div>
+      <div class="bar-track">
+        <div class="bar-fill ${col}" style="width:${Math.min(e.weight_pct, 100)}%"></div>
+        ${e.target_pct > 0 ? `<div class="bar-target-line" style="left:${e.target_pct}%"></div>` : ''}
+      </div>
+      <div class="bar-pct">${e.weight_pct.toFixed(1)}%</div>
+      <div class="bar-delta" style="color:${Math.abs(delta) < 1 ? 'var(--muted)' : delta > 0 ? 'var(--yellow)' : 'var(--green)'}">${deltaStr}</div>
+    </div>`;
+  }).join('');
+}
+
+// -- REBALANCING -------------------------------------------------------------
+function setAmount(n, btn) {
+  document.getElementById('rebal-amount').value = n;
+  document.querySelectorAll('.chip').forEach(c => c.classList.remove('active'));
+  btn.classList.add('active');
+  calcRebalance();
+}
+
+async function calcRebalance() {
+  const amount = parseFloat(document.getElementById('rebal-amount').value) || 0;
+  if (amount <= 0) return;
+
+  const result = document.getElementById('rebal-result');
+  const note = document.getElementById('rebal-note');
+
+  try {
+    const data = await api(`/rebalance?amount=${amount}`);
+
+    const rows = data.plan.map(p => {
+      if (p.shares_to_buy === 0) {
+        return `<div class="rebal-row rebal-skip">
+          <div><div class="rebal-etf">${p.name}</div><div class="rebal-action">Nessun acquisto</div></div>
+          <div></div>
+          <div class="rebal-amount" style="color:var(--muted)">&mdash;</div>
+        </div>`;
+      }
+      return `<div class="rebal-row">
+        <div>
+          <div class="rebal-etf">${p.name}</div>
+          <div class="rebal-action">Compra ${p.shares_to_buy} quota${p.shares_to_buy !== 1 ? 'e' : ''} &times; ${fmt(p.price_per_share, 2)}</div>
+        </div>
+        <div class="rebal-shares">${(p.weight_after_pct).toFixed(1)}% dopo</div>
+        <div class="rebal-amount positive">+${fmt(p.actual_spend, 0)}</div>
+      </div>`;
+    }).join('');
+
+    result.innerHTML = rows;
+
+    note.innerHTML = `Con ${fmt(amount, 0)} raggiungi i tuoi target progressivamente senza vendere nulla.<br>
+      ${data.leftover > 0.5 ? `Residuo non investibile per arrotondamento quote: <strong>${fmt(data.leftover, 2)}</strong> &mdash; tienilo sul conto per il prossimo ribilanciamento.<br>` : ''}
+      Ricorda: zero nuovi acquisti su Bond 7-10Y &mdash; lascialo diluire naturalmente.`;
+  } catch (e) {
+    result.innerHTML = `<div class="empty-state">Errore nel calcolo del ribilanciamento.</div>`;
+    note.innerHTML = '';
+  }
+}
+
+// -- PERFORMANCE -------------------------------------------------------------
+async function loadPerformance() {
+  showLoading();
+  try {
+    await fetchSnapshots();
+    renderPerformance();
+  } finally {
+    hideLoading();
+  }
+}
+
+async function addSnapshot() {
+  const date = document.getElementById('snap-date').value;
+  const value = parseFloat(document.getElementById('snap-value').value);
+  const invested = parseFloat(document.getElementById('snap-invested').value);
+  if (!date || !value) { showToast('Inserisci almeno data e valorizzazione', 'error'); return; }
+
+  showLoading();
+  try {
+    await api('/snapshots', {
+      method: 'POST',
+      body: JSON.stringify({ date, total_value: value, total_invested: invested || 0 }),
+    });
+    document.getElementById('snap-value').value = '';
+    document.getElementById('snap-invested').value = '';
+    showToast('Snapshot aggiunto');
+    await fetchSnapshots();
+    renderPerformance();
+  } finally {
+    hideLoading();
+  }
+}
+
+async function deleteSnapshot(id) {
+  showLoading();
+  try {
+    await api(`/snapshots/${id}`, { method: 'DELETE' });
+    showToast('Snapshot eliminato');
+    await fetchSnapshots();
+    renderPerformance();
+  } finally {
+    hideLoading();
+  }
+}
+
+function renderPerformance() {
+  const list = document.getElementById('history-list');
+  if (snapshots.length === 0) {
+    list.innerHTML = `<div class="empty-state">Nessuno snapshot ancora.<br>Aggiungi il primo con il form sopra per iniziare a tracciare la performance.</div>`;
+    document.getElementById('mini-chart').innerHTML = '';
+    return;
+  }
+
+  list.innerHTML = `<div class="history-list">` + snapshots.map((s, i) => {
+    const ret = s.total_invested > 0 ? ((s.total_value - s.total_invested) / s.total_invested * 100) : null;
+    const first = snapshots[0];
+    const absRet = ((s.total_value - first.total_value) / first.total_value * 100);
+    return `<div class="history-row">
+      <div class="history-date">${s.date}</div>
+      <div class="history-value">${fmt(s.total_value, 0)}</div>
+      <div class="history-invested">${s.total_invested ? 'inv. ' + fmt(s.total_invested, 0) : ''}</div>
+      <div class="history-return ${ret !== null && ret >= 0 ? 'positive' : 'negative'}">${ret !== null ? pct(ret) : '&mdash;'}<br><span style="font-size:10px;color:var(--muted)">${i > 0 ? pct(absRet) + " dall'inizio" : ''}</span></div>
+      <button class="history-delete" onclick="deleteSnapshot(${s.id})">&times;</button>
+    </div>`;
+  }).join('') + `</div>`;
+
+  renderMiniChart();
+}
+
+function renderMiniChart() {
+  const svg = document.getElementById('mini-chart');
+  if (snapshots.length < 2) { svg.innerHTML = ''; return; }
+  const W = 800, H = 120, pad = 10;
+  const vals = snapshots.map(s => s.total_value);
+  const min = Math.min(...vals), max = Math.max(...vals);
+  const range = max - min || 1;
+  const pts = snapshots.map((s, i) => {
+    const x = pad + (i / (snapshots.length - 1)) * (W - pad * 2);
+    const y = pad + (1 - (s.total_value - min) / range) * (H - pad * 2);
+    return `${x},${y}`;
+  });
+  const polyline = pts.join(' ');
+  const areaPts = `${pad},${H - pad} ` + polyline + ` ${W - pad},${H - pad}`;
+
+  svg.innerHTML = `
+    <defs>
+      <linearGradient id="lg" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%" stop-color="#7c6fff" stop-opacity="0.3"/>
+        <stop offset="100%" stop-color="#7c6fff" stop-opacity="0"/>
+      </linearGradient>
+    </defs>
+    <polygon points="${areaPts}" fill="url(#lg)"/>
+    <polyline points="${polyline}" fill="none" stroke="#7c6fff" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+    ${snapshots.map((s, i) => {
+      const x = pad + (i / (snapshots.length - 1)) * (W - pad * 2);
+      const y = pad + (1 - (s.total_value - min) / range) * (H - pad * 2);
+      return `<circle cx="${x}" cy="${y}" r="4" fill="#7c6fff"/>`;
+    }).join('')}
+  `;
+}
+
+// -- SETTINGS ----------------------------------------------------------------
+async function loadSettings() {
+  showLoading();
+  try {
+    await fetchPortfolio();
+    renderSettings();
+  } finally {
+    hideLoading();
+  }
+}
+
+function renderSettings() {
+  if (!portfolio) return;
+  const etfs = portfolio.etfs;
+
+  const el = document.getElementById('settings-etf-list');
+  el.innerHTML = etfs.map(e => `
+    <div style="margin-bottom:16px;padding:16px;background:var(--surface2);border-radius:10px;border:1px solid var(--border)">
+      <div style="font-family:var(--font-display);font-weight:600;margin-bottom:12px">${e.name}</div>
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px">
+        <div class="input-wrap">
+          <label>Prezzo mercato (&euro;)</label>
+          <input type="number" id="s-price-${e.id}" value="${e.price.toFixed(4)}" step="0.0001">
+        </div>
+        <div class="input-wrap">
+          <label>PMC (&euro;)</label>
+          <input type="number" id="s-pmc-${e.id}" value="${e.pmc.toFixed(4)}" step="0.0001">
+        </div>
+        <div class="input-wrap">
+          <label>Quantit&agrave;</label>
+          <input type="number" id="s-qty-${e.id}" value="${e.qty}" step="1">
+        </div>
+      </div>
+    </div>
+  `).join('');
+
+  // Target editor
+  const te = document.getElementById('target-editor');
+  te.innerHTML = etfs.map(e => `
+    <div style="margin-bottom:12px">
+      <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px">
+        <span>${e.name}</span>
+        <span id="t-display-${e.id}">${e.target_pct}%</span>
+      </div>
+      <input type="range" min="0" max="100" step="5" value="${e.target_pct}"
+        oninput="document.getElementById('t-display-${e.id}').textContent=this.value+'%';updateTargetSum()"
+        id="t-${e.id}">
+    </div>
+  `).join('');
+  updateTargetSum();
+}
+
+function updateTargetSum() {
+  if (!portfolio) return;
+  const sum = portfolio.etfs.reduce((s, e) => {
+    const el = document.getElementById('t-' + e.id);
+    return s + (el ? parseInt(el.value) : 0);
+  }, 0);
+  const el = document.getElementById('target-sum');
+  el.innerHTML = `Totale: <strong style="color:${sum === 100 ? 'var(--green)' : 'var(--red)'}">${sum}%</strong> ${sum === 100 ? '\u2713' : '(deve essere 100%)'}`;
+}
+
+async function saveSettings() {
+  if (!portfolio) return;
+  showLoading();
+  try {
+    for (const e of portfolio.etfs) {
+      const price = parseFloat(document.getElementById('s-price-' + e.id).value);
+      const pmc = parseFloat(document.getElementById('s-pmc-' + e.id).value);
+      const qty = parseFloat(document.getElementById('s-qty-' + e.id).value);
+      await api(`/etf/${e.id}`, {
+        method: 'PUT',
+        body: JSON.stringify({ price, pmc, qty }),
+      });
+    }
+    showToast('Portafoglio aggiornato');
+    await fetchPortfolio();
+    renderDashboard();
+    renderSettings();
+  } finally {
+    hideLoading();
+  }
+}
+
+async function saveTargets() {
+  if (!portfolio) return;
+  const targets = {};
+  let sum = 0;
+  for (const e of portfolio.etfs) {
+    const el = document.getElementById('t-' + e.id);
+    const val = el ? parseInt(el.value) : 0;
+    targets[e.id] = val;
+    sum += val;
+  }
+  if (sum !== 100) { showToast('Il totale dei target deve essere 100%. Attuale: ' + sum + '%', 'error'); return; }
+
+  showLoading();
+  try {
+    await api('/targets', {
+      method: 'PUT',
+      body: JSON.stringify({ targets }),
+    });
+    showToast('Target salvati');
+    await fetchPortfolio();
+  } finally {
+    hideLoading();
+  }
+}
+
+// -- INIT --------------------------------------------------------------------
+document.getElementById('snap-date').value = new Date().toISOString().split('T')[0];
+loadDashboard();
+</script>
+</body>
+</html>
