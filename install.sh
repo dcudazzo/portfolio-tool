@@ -2,7 +2,7 @@
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Portfolio Tracker — Proxmox LXC Install Script
-# Uso: bash -c "$(wget -qLO - https://raw.githubusercontent.com/TUO-USER/portfolio-tool/main/install.sh)"
+# Uso: bash -c "$(wget -qLO - https://raw.githubusercontent.com/dcudazzo/portfolio-tool/main/install.sh)"
 # ─────────────────────────────────────────────────────────────────────────────
 
 set -euo pipefail
@@ -16,7 +16,7 @@ CL="\033[m"
 
 # ── Config defaults ──────────────────────────────────────────────────────────
 APP="portfolio-tracker"
-REPO="https://github.com/TUO-USER/portfolio-tool.git"  # <-- MODIFICA CON IL TUO REPO
+REPO="https://github.com/dcudazzo/portfolio-tool.git"
 CT_ID=""
 HN="portfolio"
 DISK="4"
