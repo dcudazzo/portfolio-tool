@@ -6,10 +6,12 @@ from fastapi.staticfiles import StaticFiles
 from sqlalchemy.orm import Session
 
 from database import engine, get_db, Base
-from models import ETF, Snapshot
+from models import ETF, Cash, Snapshot
 from schemas import (
     ETFUpdate,
     ETFOut,
+    CashUpdate,
+    CashOut,
     PortfolioOut,
     TargetsUpdate,
     RebalanceOut,
@@ -82,6 +84,9 @@ def startup():
             for item in SEED_DATA:
                 db.add(ETF(**item))
             db.commit()
+        if db.query(Cash).count() == 0:
+            db.add(Cash(id=1, amount=0, target_pct=0))
+            db.commit()
     finally:
         db.close()
 
@@ -112,14 +117,26 @@ def _build_etf_out(etf: ETF, total_value: float) -> ETFOut:
     )
 
 
+def _get_cash(db: Session) -> Cash:
+    cash = db.query(Cash).first()
+    if not cash:
+        cash = Cash(id=1, amount=0, target_pct=0)
+        db.add(cash)
+        db.commit()
+        db.refresh(cash)
+    return cash
+
+
 def _total_value(db: Session) -> float:
     etfs = db.query(ETF).all()
-    return sum(e.price * e.qty for e in etfs)
+    cash = _get_cash(db)
+    return sum(e.price * e.qty for e in etfs) + cash.amount
 
 
 def _total_invested(db: Session) -> float:
     etfs = db.query(ETF).all()
-    return sum(e.pmc * e.qty for e in etfs)
+    cash = _get_cash(db)
+    return sum(e.pmc * e.qty for e in etfs) + cash.amount
 
 
 # ---------------------------------------------------------------------------
@@ -128,13 +145,22 @@ def _total_invested(db: Session) -> float:
 @app.get("/api/portfolio", response_model=PortfolioOut)
 def get_portfolio(db: Session = Depends(get_db)):
     etfs = db.query(ETF).all()
-    total_val = sum(e.price * e.qty for e in etfs)
-    total_inv = sum(e.pmc * e.qty for e in etfs)
+    cash = _get_cash(db)
+    etf_val = sum(e.price * e.qty for e in etfs)
+    total_val = etf_val + cash.amount
+    total_inv = sum(e.pmc * e.qty for e in etfs) + cash.amount
     gain_eur = round(total_val - total_inv, 2)
     gain_pct = round((gain_eur / total_inv * 100) if total_inv else 0, 2)
 
+    cash_weight = round((cash.amount / total_val * 100) if total_val else 0, 2)
+
     return PortfolioOut(
         etfs=[_build_etf_out(e, total_val) for e in etfs],
+        liquidity=CashOut(
+            amount=cash.amount,
+            target_pct=cash.target_pct,
+            weight_pct=cash_weight,
+        ),
         total_value=round(total_val, 2),
         total_invested=round(total_inv, 2),
         total_gain_eur=gain_eur,
@@ -167,6 +193,25 @@ def update_etf(etf_id: str, data: ETFUpdate, db: Session = Depends(get_db)):
 
 
 # ---------------------------------------------------------------------------
+# PUT /api/cash
+# ---------------------------------------------------------------------------
+@app.put("/api/cash", response_model=CashOut)
+def update_cash(data: CashUpdate, db: Session = Depends(get_db)):
+    cash = _get_cash(db)
+    if data.amount is not None:
+        cash.amount = data.amount
+    if data.target_pct is not None:
+        cash.target_pct = data.target_pct
+    cash.updated_at = datetime.now(timezone.utc)
+    db.commit()
+    db.refresh(cash)
+
+    total_val = _total_value(db)
+    cash_weight = round((cash.amount / total_val * 100) if total_val else 0, 2)
+    return CashOut(amount=cash.amount, target_pct=cash.target_pct, weight_pct=cash_weight)
+
+
+# ---------------------------------------------------------------------------
 # PUT /api/targets
 # ---------------------------------------------------------------------------
 @app.put("/api/targets")
@@ -178,11 +223,16 @@ def update_targets(data: TargetsUpdate, db: Session = Depends(get_db)):
             detail=f"I target devono sommare a 100%. Attuale: {total}%",
         )
 
-    for etf_id, pct in data.targets.items():
-        etf = db.query(ETF).filter(ETF.id == etf_id).first()
-        if etf:
-            etf.target_pct = pct
-            etf.updated_at = datetime.now(timezone.utc)
+    for key, pct in data.targets.items():
+        if key == "cash":
+            cash = _get_cash(db)
+            cash.target_pct = pct
+            cash.updated_at = datetime.now(timezone.utc)
+        else:
+            etf = db.query(ETF).filter(ETF.id == key).first()
+            if etf:
+                etf.target_pct = pct
+                etf.updated_at = datetime.now(timezone.utc)
 
     db.commit()
     return {"status": "ok", "targets": data.targets}
@@ -194,7 +244,9 @@ def update_targets(data: TargetsUpdate, db: Session = Depends(get_db)):
 @app.get("/api/rebalance", response_model=RebalanceOut)
 def get_rebalance(amount: float = Query(..., gt=0), db: Session = Depends(get_db)):
     etfs = db.query(ETF).all()
-    current_total = sum(e.price * e.qty for e in etfs)
+    cash = _get_cash(db)
+    etf_total = sum(e.price * e.qty for e in etfs)
+    current_total = etf_total + cash.amount
     future_total = current_total + amount
 
     # Calculate gaps (only for ETFs with target > 0)
@@ -253,11 +305,17 @@ def get_rebalance(amount: float = Query(..., gt=0), db: Session = Depends(get_db
             )
         )
 
+    leftover = round(amount - total_spent, 2)
+    # Cash target allocation for the future total
+    cash_target_val = future_total * (cash.target_pct / 100) if cash.target_pct > 0 else 0
+    liquidity_after = round(cash.amount + leftover, 2)
+
     return RebalanceOut(
         amount=amount,
         plan=plan,
         total_spent=round(total_spent, 2),
-        leftover=round(amount - total_spent, 2),
+        leftover=leftover,
+        liquidity_after=liquidity_after,
     )
 
 
@@ -298,19 +356,24 @@ def delete_snapshot(snapshot_id: int, db: Session = Depends(get_db)):
 @app.get("/api/summary", response_model=SummaryOut)
 def get_summary(db: Session = Depends(get_db)):
     etfs = db.query(ETF).all()
-    total_val = sum(e.price * e.qty for e in etfs)
-    total_inv = sum(e.pmc * e.qty for e in etfs)
+    cash = _get_cash(db)
+    etf_val = sum(e.price * e.qty for e in etfs)
+    total_val = etf_val + cash.amount
+    total_inv = sum(e.pmc * e.qty for e in etfs) + cash.amount
     gain_eur = round(total_val - total_inv, 2)
     gain_pct = round((gain_eur / total_inv * 100) if total_inv else 0, 2)
 
     weights = {e.id: round((e.price * e.qty) / total_val * 100, 2) if total_val else 0 for e in etfs}
+    weights["cash"] = round((cash.amount / total_val * 100) if total_val else 0, 2)
     targets = {e.id: e.target_pct for e in etfs}
+    targets["cash"] = cash.target_pct
 
     return SummaryOut(
         total_value=round(total_val, 2),
         total_invested=round(total_inv, 2),
         total_gain_eur=gain_eur,
         total_gain_pct=gain_pct,
+        liquidity=cash.amount,
         weights=weights,
         targets=targets,
     )

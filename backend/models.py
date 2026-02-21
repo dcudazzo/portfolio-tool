@@ -20,6 +20,19 @@ class ETF(Base):
     )
 
 
+class Cash(Base):
+    __tablename__ = "cash"
+
+    id = Column(Integer, primary_key=True, default=1)
+    amount = Column(Float, nullable=False, default=0)
+    target_pct = Column(Float, nullable=False, default=0)
+    updated_at = Column(
+        DateTime,
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+
 class Snapshot(Base):
     __tablename__ = "snapshots"
 

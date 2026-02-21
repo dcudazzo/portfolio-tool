@@ -673,6 +673,7 @@ function renderDashboard() {
 
   // ETF list
   const list = document.getElementById('etf-list');
+  const liq = p.liquidity;
   list.innerHTML = p.etfs.map((e, i) => `
     <div class="etf-row">
       <div>
@@ -687,11 +688,24 @@ function renderDashboard() {
         ${e.weight_pct.toFixed(1)}%
       </div>
     </div>
-  `).join('');
+  `).join('') + (liq.amount > 0 ? `
+    <div class="etf-row" style="border-color:var(--accent);border-style:dashed">
+      <div>
+        <div class="etf-name">Liquidit&agrave;</div>
+        <div class="etf-meta">Conto corrente / deposito</div>
+      </div>
+      <div class="etf-value">
+        <div class="val">${fmt(liq.amount)}</div>
+        <div class="gain-pct" style="color:var(--muted)">0.00%</div>
+      </div>
+      <div style="font-size:11px;color:var(--muted);text-align:right">
+        ${liq.weight_pct.toFixed(1)}%
+      </div>
+    </div>` : '');
 
   // Bars
   const bars = document.getElementById('bar-section');
-  bars.innerHTML = p.etfs.map((e, i) => {
+  let barsHtml = p.etfs.map((e, i) => {
     const delta = e.delta_pct;
     const deltaStr = (delta > 0 ? '+' : '') + delta.toFixed(1) + '%';
     const col = ETF_COLORS[i];
@@ -705,6 +719,21 @@ function renderDashboard() {
       <div class="bar-delta" style="color:${Math.abs(delta) < 1 ? 'var(--muted)' : delta > 0 ? 'var(--yellow)' : 'var(--green)'}">${deltaStr}</div>
     </div>`;
   }).join('');
+  // Liquidity bar
+  if (liq.amount > 0 || liq.target_pct > 0) {
+    const liqDelta = liq.weight_pct - liq.target_pct;
+    const liqDeltaStr = (liqDelta > 0 ? '+' : '') + liqDelta.toFixed(1) + '%';
+    barsHtml += `<div class="bar-row">
+      <div class="bar-label" title="Liquidit\u00E0">Liquidit\u00E0</div>
+      <div class="bar-track">
+        <div class="bar-fill" style="width:${Math.min(liq.weight_pct, 100)}%;background:linear-gradient(90deg,#a0a0c0,#808098)"></div>
+        ${liq.target_pct > 0 ? `<div class="bar-target-line" style="left:${liq.target_pct}%"></div>` : ''}
+      </div>
+      <div class="bar-pct">${liq.weight_pct.toFixed(1)}%</div>
+      <div class="bar-delta" style="color:${Math.abs(liqDelta) < 1 ? 'var(--muted)' : liqDelta > 0 ? 'var(--yellow)' : 'var(--green)'}">${liqDeltaStr}</div>
+    </div>`;
+  }
+  bars.innerHTML = barsHtml;
 }
 
 // -- REBALANCING -------------------------------------------------------------
@@ -747,6 +776,7 @@ async function calcRebalance() {
 
     note.innerHTML = `Con ${fmt(amount, 0)} raggiungi i tuoi target progressivamente senza vendere nulla.<br>
       ${data.leftover > 0.5 ? `Residuo non investibile per arrotondamento quote: <strong>${fmt(data.leftover, 2)}</strong> &mdash; tienilo sul conto per il prossimo ribilanciamento.<br>` : ''}
+      ${data.liquidity_after > 0 ? `Liquidit&agrave; dopo il ribilanciamento: <strong>${fmt(data.liquidity_after, 2)}</strong><br>` : ''}
       Ricorda: zero nuovi acquisti su Bond 7-10Y &mdash; lascialo diluire naturalmente.`;
   } catch (e) {
     result.innerHTML = `<div class="empty-state">Errore nel calcolo del ribilanciamento.</div>`;
@@ -871,7 +901,16 @@ function renderSettings() {
   const etfs = portfolio.etfs;
 
   const el = document.getElementById('settings-etf-list');
-  el.innerHTML = etfs.map(e => `
+  const cashAmount = portfolio.liquidity.amount;
+  el.innerHTML = `
+    <div style="margin-bottom:16px;padding:16px;background:var(--surface2);border-radius:10px;border:1px solid var(--accent);border-style:dashed">
+      <div style="font-family:var(--font-display);font-weight:600;margin-bottom:12px">Liquidit&agrave;</div>
+      <div class="input-wrap">
+        <label>Importo disponibile (&euro;)</label>
+        <input type="number" id="s-cash-amount" value="${cashAmount.toFixed(2)}" step="0.01">
+      </div>
+    </div>
+  ` + etfs.map(e => `
     <div style="margin-bottom:16px;padding:16px;background:var(--surface2);border-radius:10px;border:1px solid var(--border)">
       <div style="font-family:var(--font-display);font-weight:600;margin-bottom:12px">${e.name}</div>
       <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px">
@@ -893,6 +932,7 @@ function renderSettings() {
 
   // Target editor
   const te = document.getElementById('target-editor');
+  const cashTarget = portfolio.liquidity.target_pct;
   te.innerHTML = etfs.map(e => `
     <div style="margin-bottom:12px">
       <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px">
@@ -903,16 +943,27 @@ function renderSettings() {
         oninput="document.getElementById('t-display-${e.id}').textContent=this.value+'%';updateTargetSum()"
         id="t-${e.id}">
     </div>
-  `).join('');
+  `).join('') + `
+    <div style="margin-bottom:12px">
+      <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px">
+        <span>Liquidit&agrave;</span>
+        <span id="t-display-cash">${cashTarget}%</span>
+      </div>
+      <input type="range" min="0" max="100" step="5" value="${cashTarget}"
+        oninput="document.getElementById('t-display-cash').textContent=this.value+'%';updateTargetSum()"
+        id="t-cash" style="accent-color:#808098">
+    </div>`;
   updateTargetSum();
 }
 
 function updateTargetSum() {
   if (!portfolio) return;
-  const sum = portfolio.etfs.reduce((s, e) => {
+  let sum = portfolio.etfs.reduce((s, e) => {
     const el = document.getElementById('t-' + e.id);
     return s + (el ? parseInt(el.value) : 0);
   }, 0);
+  const cashEl = document.getElementById('t-cash');
+  if (cashEl) sum += parseInt(cashEl.value);
   const el = document.getElementById('target-sum');
   el.innerHTML = `Totale: <strong style="color:${sum === 100 ? 'var(--green)' : 'var(--red)'}">${sum}%</strong> ${sum === 100 ? '\u2713' : '(deve essere 100%)'}`;
 }
@@ -921,6 +972,13 @@ async function saveSettings() {
   if (!portfolio) return;
   showLoading();
   try {
+    // Save cash amount
+    const cashAmount = parseFloat(document.getElementById('s-cash-amount').value) || 0;
+    await api('/cash', {
+      method: 'PUT',
+      body: JSON.stringify({ amount: cashAmount }),
+    });
+    // Save ETFs
     for (const e of portfolio.etfs) {
       const price = parseFloat(document.getElementById('s-price-' + e.id).value);
       const pmc = parseFloat(document.getElementById('s-pmc-' + e.id).value);
@@ -949,6 +1007,10 @@ async function saveTargets() {
     targets[e.id] = val;
     sum += val;
   }
+  const cashEl = document.getElementById('t-cash');
+  const cashVal = cashEl ? parseInt(cashEl.value) : 0;
+  targets['cash'] = cashVal;
+  sum += cashVal;
   if (sum !== 100) { showToast('Il totale dei target deve essere 100%. Attuale: ' + sum + '%', 'error'); return; }
 
   showLoading();

@@ -27,8 +27,24 @@ class ETFOut(BaseModel):
         from_attributes = True
 
 
+# --- Cash / Liquidity ---
+class CashUpdate(BaseModel):
+    amount: Optional[float] = None
+    target_pct: Optional[float] = None
+
+
+class CashOut(BaseModel):
+    amount: float
+    target_pct: float
+    weight_pct: float
+
+    class Config:
+        from_attributes = True
+
+
 class PortfolioOut(BaseModel):
     etfs: list[ETFOut]
+    liquidity: CashOut
     total_value: float
     total_invested: float
     total_gain_eur: float
@@ -56,6 +72,7 @@ class RebalanceOut(BaseModel):
     plan: list[RebalancePlanItem]
     total_spent: float
     leftover: float
+    liquidity_after: float
 
 
 # --- Snapshots ---
@@ -81,5 +98,6 @@ class SummaryOut(BaseModel):
     total_invested: float
     total_gain_eur: float
     total_gain_pct: float
+    liquidity: float
     weights: dict[str, float]
     targets: dict[str, float]

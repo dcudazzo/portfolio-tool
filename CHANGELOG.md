@@ -1,5 +1,21 @@
 # Portfolio Tracker — Changelog
 
+## v1.1 — 2026-02-21
+
+### 11.2 Gestione liquidita
+- [x] Nuovo modello `Cash` nel database (amount, target_pct)
+- [x] Endpoint `PUT /api/cash` per aggiornare importo e target liquidita
+- [x] `GET /api/portfolio` include campo `liquidity` con amount, target_pct, weight_pct
+- [x] `PUT /api/targets` accetta chiave `cash` per il target liquidita
+- [x] `GET /api/rebalance` include `liquidity_after` nella risposta
+- [x] `GET /api/summary` include liquidita in pesi e target
+- [x] Totali portafoglio (total_value, total_invested) includono la liquidita
+- [x] Dashboard: riga "Liquidita" con bordo tratteggiato, peso %, 0% gain
+- [x] Dashboard: barra peso liquidita con target line
+- [x] Ribilanciamento: mostra "Liquidita dopo il ribilanciamento" nei risultati
+- [x] Impostazioni: sezione dedicata per editare importo liquidita
+- [x] Impostazioni: slider target liquidita incluso nella validazione somma=100%
+
 ## v1.0 — 2026-02-21
 
 ### Struttura progetto
