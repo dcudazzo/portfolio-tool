@@ -1,3 +1,4 @@
+import json
 import math
 from datetime import datetime, timezone
 
@@ -6,7 +7,7 @@ from fastapi.staticfiles import StaticFiles
 from sqlalchemy.orm import Session
 
 from database import engine, get_db, Base
-from models import ETF, Cash, Snapshot
+from models import ETF, Cash, Snapshot, Strategy, StrategyHistory
 from schemas import (
     ETFUpdate,
     ETFOut,
@@ -19,6 +20,10 @@ from schemas import (
     SnapshotCreate,
     SnapshotOut,
     SummaryOut,
+    StrategyCreate,
+    StrategyUpdate,
+    StrategyOut,
+    StrategyHistoryOut,
 )
 
 app = FastAPI(title="Portfolio Tracker", version="1.0.0")
@@ -77,15 +82,38 @@ SEED_DATA = [
 
 @app.on_event("startup")
 def startup():
+    """Crea le tabelle e inserisce i dati iniziali al primo avvio."""
     Base.metadata.create_all(bind=engine)
     db = next(get_db())
     try:
+        # Seed ETF
         if db.query(ETF).count() == 0:
             for item in SEED_DATA:
                 db.add(ETF(**item))
             db.commit()
+
+        # Seed Cash
         if db.query(Cash).count() == 0:
             db.add(Cash(id=1, amount=0, target_pct=0))
+            db.commit()
+
+        # Seed strategia predefinita dai target del seed data
+        if db.query(Strategy).count() == 0:
+            seed_targets = {s["id"]: s["target_pct"] for s in SEED_DATA}
+            seed_targets["cash"] = 0
+            now = datetime.now(timezone.utc)
+            db.add(Strategy(
+                name="Predefinita",
+                description="Strategia iniziale generata dal seed",
+                targets_json=json.dumps(seed_targets),
+                is_active=True,
+                activated_at=now,
+            ))
+            # Log della prima attivazione
+            db.add(StrategyHistory(
+                strategy_name="Predefinita",
+                activated_at=now,
+            ))
             db.commit()
     finally:
         db.close()
@@ -216,6 +244,7 @@ def update_cash(data: CashUpdate, db: Session = Depends(get_db)):
 # ---------------------------------------------------------------------------
 @app.put("/api/targets")
 def update_targets(data: TargetsUpdate, db: Session = Depends(get_db)):
+    """Aggiorna i target sugli ETF/Cash e sincronizza la strategia attiva."""
     total = sum(data.targets.values())
     if abs(total - 100) > 0.01:
         raise HTTPException(
@@ -223,6 +252,7 @@ def update_targets(data: TargetsUpdate, db: Session = Depends(get_db)):
             detail=f"I target devono sommare a 100%. Attuale: {total}%",
         )
 
+    # Aggiorna i target sui singoli ETF e Cash
     for key, pct in data.targets.items():
         if key == "cash":
             cash = _get_cash(db)
@@ -233,6 +263,11 @@ def update_targets(data: TargetsUpdate, db: Session = Depends(get_db)):
             if etf:
                 etf.target_pct = pct
                 etf.updated_at = datetime.now(timezone.utc)
+
+    # Sincronizza con la strategia attiva (se esiste)
+    active = db.query(Strategy).filter(Strategy.is_active == True).first()
+    if active:
+        active.targets_json = json.dumps(data.targets)
 
     db.commit()
     return {"status": "ok", "targets": data.targets}
@@ -316,6 +351,173 @@ def get_rebalance(amount: float = Query(..., gt=0), db: Session = Depends(get_db
         total_spent=round(total_spent, 2),
         leftover=leftover,
         liquidity_after=liquidity_after,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Helpers strategie
+# ---------------------------------------------------------------------------
+
+def _strategy_to_out(s: Strategy) -> StrategyOut:
+    """Converte un record Strategy nel suo schema di output, deserializzando il JSON."""
+    return StrategyOut(
+        id=s.id,
+        name=s.name,
+        description=s.description,
+        targets=json.loads(s.targets_json),
+        is_active=s.is_active,
+        created_at=s.created_at,
+        activated_at=s.activated_at,
+    )
+
+
+def _apply_strategy_targets(db: Session, targets: dict):
+    """Copia i target di una strategia sugli ETF e Cash (li rende attivi)."""
+    for key, pct in targets.items():
+        if key == "cash":
+            cash = _get_cash(db)
+            cash.target_pct = pct
+            cash.updated_at = datetime.now(timezone.utc)
+        else:
+            etf = db.query(ETF).filter(ETF.id == key).first()
+            if etf:
+                etf.target_pct = pct
+                etf.updated_at = datetime.now(timezone.utc)
+
+
+# ---------------------------------------------------------------------------
+# GET /api/strategies
+# ---------------------------------------------------------------------------
+@app.get("/api/strategies", response_model=list[StrategyOut])
+def list_strategies(db: Session = Depends(get_db)):
+    """Restituisce tutte le strategie, ordinate per nome."""
+    rows = db.query(Strategy).order_by(Strategy.name).all()
+    return [_strategy_to_out(s) for s in rows]
+
+
+# ---------------------------------------------------------------------------
+# POST /api/strategies
+# ---------------------------------------------------------------------------
+@app.post("/api/strategies", response_model=StrategyOut, status_code=201)
+def create_strategy(data: StrategyCreate, db: Session = Depends(get_db)):
+    """Crea una nuova strategia. I target devono sommare a 100%."""
+    total = sum(data.targets.values())
+    if abs(total - 100) > 0.01:
+        raise HTTPException(
+            status_code=400,
+            detail=f"I target devono sommare a 100%. Attuale: {total}%",
+        )
+
+    # Controlla nome univoco
+    if db.query(Strategy).filter(Strategy.name == data.name).first():
+        raise HTTPException(status_code=400, detail="Esiste gia' una strategia con questo nome")
+
+    s = Strategy(
+        name=data.name,
+        description=data.description,
+        targets_json=json.dumps(data.targets),
+    )
+    db.add(s)
+    db.commit()
+    db.refresh(s)
+    return _strategy_to_out(s)
+
+
+# ---------------------------------------------------------------------------
+# PUT /api/strategies/{id}
+# ---------------------------------------------------------------------------
+@app.put("/api/strategies/{strategy_id}", response_model=StrategyOut)
+def update_strategy(strategy_id: int, data: StrategyUpdate, db: Session = Depends(get_db)):
+    """Modifica nome, descrizione o target di una strategia esistente."""
+    s = db.query(Strategy).filter(Strategy.id == strategy_id).first()
+    if not s:
+        raise HTTPException(status_code=404, detail="Strategia non trovata")
+
+    if data.name is not None:
+        # Controlla che il nuovo nome non sia gia' usato da un'altra strategia
+        existing = db.query(Strategy).filter(Strategy.name == data.name, Strategy.id != strategy_id).first()
+        if existing:
+            raise HTTPException(status_code=400, detail="Esiste gia' una strategia con questo nome")
+        s.name = data.name
+
+    if data.description is not None:
+        s.description = data.description
+
+    if data.targets is not None:
+        total = sum(data.targets.values())
+        if abs(total - 100) > 0.01:
+            raise HTTPException(
+                status_code=400,
+                detail=f"I target devono sommare a 100%. Attuale: {total}%",
+            )
+        s.targets_json = json.dumps(data.targets)
+        # Se e' la strategia attiva, aggiorna anche ETF/Cash
+        if s.is_active:
+            _apply_strategy_targets(db, data.targets)
+
+    db.commit()
+    db.refresh(s)
+    return _strategy_to_out(s)
+
+
+# ---------------------------------------------------------------------------
+# DELETE /api/strategies/{id}
+# ---------------------------------------------------------------------------
+@app.delete("/api/strategies/{strategy_id}")
+def delete_strategy(strategy_id: int, db: Session = Depends(get_db)):
+    """Elimina una strategia. Non si puo' eliminare quella attiva."""
+    s = db.query(Strategy).filter(Strategy.id == strategy_id).first()
+    if not s:
+        raise HTTPException(status_code=404, detail="Strategia non trovata")
+    if s.is_active:
+        raise HTTPException(status_code=400, detail="Non puoi eliminare la strategia attiva")
+    db.delete(s)
+    db.commit()
+    return {"status": "ok"}
+
+
+# ---------------------------------------------------------------------------
+# POST /api/strategies/{id}/activate
+# ---------------------------------------------------------------------------
+@app.post("/api/strategies/{strategy_id}/activate", response_model=StrategyOut)
+def activate_strategy(strategy_id: int, db: Session = Depends(get_db)):
+    """Attiva una strategia: copia i suoi target sugli ETF/Cash e logga l'attivazione."""
+    s = db.query(Strategy).filter(Strategy.id == strategy_id).first()
+    if not s:
+        raise HTTPException(status_code=404, detail="Strategia non trovata")
+
+    now = datetime.now(timezone.utc)
+
+    # Disattiva tutte le strategie
+    db.query(Strategy).update({Strategy.is_active: False})
+
+    # Attiva quella selezionata
+    s.is_active = True
+    s.activated_at = now
+
+    # Copia i target della strategia sugli ETF e Cash
+    targets = json.loads(s.targets_json)
+    _apply_strategy_targets(db, targets)
+
+    # Registra nello storico
+    db.add(StrategyHistory(strategy_name=s.name, activated_at=now))
+
+    db.commit()
+    db.refresh(s)
+    return _strategy_to_out(s)
+
+
+# ---------------------------------------------------------------------------
+# GET /api/strategies/history
+# ---------------------------------------------------------------------------
+@app.get("/api/strategies/history", response_model=list[StrategyHistoryOut])
+def get_strategy_history(db: Session = Depends(get_db)):
+    """Restituisce lo storico delle attivazioni (piu' recenti prima)."""
+    return (
+        db.query(StrategyHistory)
+        .order_by(StrategyHistory.activated_at.desc())
+        .limit(50)
+        .all()
     )
 
 

@@ -1,3 +1,4 @@
+from datetime import datetime
 from pydantic import BaseModel
 from typing import Optional
 
@@ -101,3 +102,43 @@ class SummaryOut(BaseModel):
     liquidity: float
     weights: dict[str, float]
     targets: dict[str, float]
+
+
+# --- Strategie ---
+
+class StrategyCreate(BaseModel):
+    """Dati per creare una nuova strategia."""
+    name: str
+    description: str = ""
+    targets: dict[str, float]       # {"world": 70, "em": 15, ..., "cash": 0}
+
+
+class StrategyUpdate(BaseModel):
+    """Campi aggiornabili di una strategia (tutti opzionali)."""
+    name: Optional[str] = None
+    description: Optional[str] = None
+    targets: Optional[dict[str, float]] = None
+
+
+class StrategyOut(BaseModel):
+    """Strategia restituita al frontend."""
+    id: int
+    name: str
+    description: str
+    targets: dict[str, float]       # target deserializzati da JSON
+    is_active: bool
+    created_at: datetime
+    activated_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+
+class StrategyHistoryOut(BaseModel):
+    """Singola voce dello storico attivazioni."""
+    id: int
+    strategy_name: str
+    activated_at: datetime
+
+    class Config:
+        from_attributes = True

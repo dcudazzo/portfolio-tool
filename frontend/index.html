@@ -568,6 +568,25 @@
 
   <!-- IMPOSTAZIONI -->
   <div id="tab-settings" class="panel">
+
+    <!-- Strategie di allocazione -->
+    <div class="card">
+      <div class="card-title">Strategie di allocazione</div>
+      <div id="strategy-list"></div>
+      <!-- Form creazione nuova strategia -->
+      <div style="margin-top:16px;padding:16px;background:var(--surface2);border-radius:10px;border:1px dashed var(--border)">
+        <div style="font-size:12px;color:var(--muted);margin-bottom:8px;text-transform:uppercase;letter-spacing:1px">Nuova strategia</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
+          <div class="input-wrap"><label>Nome</label><input type="text" id="new-strat-name" placeholder="Es. Aggressiva 20Y"></div>
+          <div class="input-wrap"><label>Descrizione</label><input type="text" id="new-strat-desc" placeholder="Opzionale"></div>
+        </div>
+        <button class="btn" onclick="createStrategy()">+ Crea strategia</button>
+        <div style="font-size:11px;color:var(--muted);margin-top:8px">La nuova strategia verra' creata con i target attualmente in uso.</div>
+      </div>
+      <!-- Storico attivazioni -->
+      <div id="strategy-history" style="margin-top:16px"></div>
+    </div>
+
     <div class="card">
       <div class="card-title">Aggiorna valori portafoglio</div>
       <div id="settings-etf-list"></div>
@@ -589,8 +608,9 @@ const API_BASE = '/api';
 
 // -- STATE -------------------------------------------------------------------
 const ETF_COLORS = ['c0','c1','c2','c3','c4'];
-let portfolio = null;   // cached /api/portfolio response
+let portfolio = null;    // cached /api/portfolio response
 let snapshots = [];      // cached /api/snapshots response
+let strategies = [];     // cached /api/strategies response
 
 // -- UI HELPERS --------------------------------------------------------------
 const fmt = (n, d=0) => {
@@ -637,6 +657,11 @@ async function fetchPortfolio() {
 async function fetchSnapshots() {
   snapshots = await api('/snapshots');
   return snapshots;
+}
+
+async function fetchStrategies() {
+  strategies = await api('/strategies');
+  return strategies;
 }
 
 // -- TABS --------------------------------------------------------------------
@@ -889,7 +914,8 @@ function renderMiniChart() {
 async function loadSettings() {
   showLoading();
   try {
-    await fetchPortfolio();
+    await Promise.all([fetchPortfolio(), fetchStrategies()]);
+    renderStrategies();
     renderSettings();
   } finally {
     hideLoading();
@@ -1021,6 +1047,115 @@ async function saveTargets() {
     });
     showToast('Target salvati');
     await fetchPortfolio();
+  } finally {
+    hideLoading();
+  }
+}
+
+// -- STRATEGIE ---------------------------------------------------------------
+
+function renderStrategies() {
+  const el = document.getElementById('strategy-list');
+  if (!strategies.length) {
+    el.innerHTML = '<div class="empty-state">Nessuna strategia salvata.</div>';
+    return;
+  }
+
+  // Lista delle strategie
+  el.innerHTML = strategies.map(s => {
+    const active = s.is_active;
+    const border = active ? 'border-color:var(--accent)' : '';
+    return `<div style="padding:14px 16px;background:var(--surface2);border-radius:10px;border:1px solid var(--border);margin-bottom:8px;${border}">
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <div>
+          <span style="font-family:var(--font-display);font-weight:600;font-size:14px">${s.name}</span>
+          ${active ? '<span style="font-size:10px;background:var(--accent);color:white;padding:2px 8px;border-radius:10px;margin-left:8px">ATTIVA</span>' : ''}
+          ${s.description ? `<div style="font-size:11px;color:var(--muted);margin-top:4px">${s.description}</div>` : ''}
+        </div>
+        <div style="display:flex;gap:8px">
+          ${!active ? `<button class="btn" style="padding:6px 14px;font-size:11px" onclick="activateStrategy(${s.id})">Attiva</button>` : ''}
+          ${!active ? `<button style="padding:6px 14px;font-size:11px;border-radius:8px;border:1px solid var(--border);background:var(--surface);color:var(--muted);cursor:pointer;font-family:var(--font-mono)" onclick="deleteStrategy(${s.id})">Elimina</button>` : ''}
+        </div>
+      </div>
+      <div style="font-size:11px;color:var(--muted);margin-top:8px">
+        ${Object.entries(s.targets).map(([k, v]) => v > 0 ? `${k}: ${v}%` : '').filter(Boolean).join(' · ')}
+      </div>
+    </div>`;
+  }).join('');
+
+  // Storico attivazioni
+  renderStrategyHistory();
+}
+
+async function renderStrategyHistory() {
+  const el = document.getElementById('strategy-history');
+  try {
+    const history = await api('/strategies/history');
+    if (!history.length) { el.innerHTML = ''; return; }
+
+    // Mostra le ultime 10 attivazioni
+    const recent = history.slice(0, 10);
+    el.innerHTML = `
+      <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px">Storico attivazioni</div>
+      ${recent.map(h => {
+        const d = new Date(h.activated_at);
+        const dateStr = d.toLocaleDateString('it-IT') + ' ' + d.toLocaleTimeString('it-IT', {hour:'2-digit', minute:'2-digit'});
+        return `<div style="font-size:12px;color:var(--muted);padding:4px 0">${h.strategy_name} &mdash; ${dateStr}</div>`;
+      }).join('')}`;
+  } catch (e) {
+    el.innerHTML = '';
+  }
+}
+
+async function createStrategy() {
+  const name = document.getElementById('new-strat-name').value.trim();
+  if (!name) { showToast('Inserisci un nome per la strategia', 'error'); return; }
+  const desc = document.getElementById('new-strat-desc').value.trim();
+
+  // Usa i target correnti (dalla strategia attiva / slider) come base
+  if (!portfolio) await fetchPortfolio();
+  const targets = {};
+  for (const e of portfolio.etfs) targets[e.id] = e.target_pct;
+  targets['cash'] = portfolio.liquidity.target_pct;
+
+  showLoading();
+  try {
+    await api('/strategies', {
+      method: 'POST',
+      body: JSON.stringify({ name, description: desc, targets }),
+    });
+    document.getElementById('new-strat-name').value = '';
+    document.getElementById('new-strat-desc').value = '';
+    showToast('Strategia creata');
+    await fetchStrategies();
+    renderStrategies();
+  } finally {
+    hideLoading();
+  }
+}
+
+async function activateStrategy(id) {
+  showLoading();
+  try {
+    await api(`/strategies/${id}/activate`, { method: 'POST' });
+    showToast('Strategia attivata');
+    // Ricarica tutto: i target ETF/Cash sono cambiati
+    await Promise.all([fetchPortfolio(), fetchStrategies()]);
+    renderStrategies();
+    renderSettings();
+    renderDashboard();
+  } finally {
+    hideLoading();
+  }
+}
+
+async function deleteStrategy(id) {
+  showLoading();
+  try {
+    await api(`/strategies/${id}`, { method: 'DELETE' });
+    showToast('Strategia eliminata');
+    await fetchStrategies();
+    renderStrategies();
   } finally {
     hideLoading();
   }

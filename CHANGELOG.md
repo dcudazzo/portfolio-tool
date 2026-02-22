@@ -1,5 +1,24 @@
 # Portfolio Tracker — Changelog
 
+## v1.2 — 2026-02-22
+
+### 11.1 Gestione strategia dinamica
+- [x] Nuovo modello `Strategy` nel database (name, description, targets_json, is_active, activated_at)
+- [x] Nuovo modello `StrategyHistory` per log attivazioni (strategy_name, activated_at)
+- [x] Seed automatico: strategia "Predefinita" creata dai target iniziali al primo avvio
+- [x] `GET /api/strategies` — lista tutte le strategie salvate
+- [x] `POST /api/strategies` — crea nuova strategia con validazione somma target = 100%
+- [x] `PUT /api/strategies/{id}` — modifica nome, descrizione o target di una strategia
+- [x] `DELETE /api/strategies/{id}` — elimina strategia (protegge quella attiva)
+- [x] `POST /api/strategies/{id}/activate` — attiva strategia, copia target su ETF/Cash, logga storico
+- [x] `GET /api/strategies/history` — storico attivazioni ordine cronologico inverso
+- [x] `PUT /api/targets` sincronizza automaticamente la strategia attiva quando si salvano i target
+- [x] Frontend: card "Strategie di allocazione" nella tab Impostazioni
+- [x] Frontend: lista strategie con badge "Attiva", pulsanti Attiva/Elimina
+- [x] Frontend: form creazione nuova strategia (nome + descrizione, usa target correnti)
+- [x] Frontend: attivazione strategia aggiorna immediatamente slider e dashboard
+- [x] Frontend: storico attivazioni (ultime 10) con data/ora
+
 ## v1.1 — 2026-02-21
 
 ### 11.2 Gestione liquidita
@@ -59,19 +78,9 @@
 
 ## Next steps — Evoluzioni future (da specifica, sezione 11)
 
-### 11.1 Gestione strategia dinamica
-- [ ] Aggiungere tabella `strategies` nel DB (nome, descrizione, target % per ETF)
-- [ ] Permettere creazione di piu strategie (es. "Aggressiva 20Y", "Moderata 10Y", "Pre-pensione")
-- [ ] Switch tra strategie dall'interfaccia
-- [ ] Il ribilanciamento usa sempre la strategia attiva corrente
-- [ ] Storico delle strategie applicate nel tempo (con date di attivazione)
+### ~~11.1 Gestione strategia dinamica~~ (completato in v1.2)
 
-### 11.2 Gestione liquidita
-- [ ] Aggiungere voce "Liquidita" al portafoglio (conto corrente, conto deposito, money market)
-- [ ] Inserimento manuale e aggiornamento periodico
-- [ ] Conteggio nel patrimonio totale e targetabile in percentuale
-- [ ] Il calcolatore di ribilanciamento tiene conto della liquidita disponibile e target
-- [ ] Visualizzazione separata: "Patrimonio investito" vs "Liquidita" vs "Totale patrimonio"
+### ~~11.2 Gestione liquidita~~ (completato in v1.1)
 
 ### 11.3 Nuovi strumenti e asset class
 - [ ] Aggiunta dinamica di nuovi ETF/asset class dall'interfaccia (nome, ticker, ISIN, PMC, qty)
