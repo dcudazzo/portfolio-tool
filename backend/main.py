@@ -97,22 +97,49 @@ def startup():
             db.add(Cash(id=1, amount=0, target_pct=0))
             db.commit()
 
-        # Seed strategia predefinita dai target del seed data
+        # Seed strategie pre-impostate
         if db.query(Strategy).count() == 0:
             seed_targets = {s["id"]: s["target_pct"] for s in SEED_DATA}
             seed_targets["cash"] = 0
             now = datetime.now(timezone.utc)
+
+            # Strategia attiva (corrisponde ai target del seed)
             db.add(Strategy(
                 name="Predefinita",
-                description="Strategia iniziale generata dal seed",
+                description="Allocazione iniziale del portafoglio",
                 targets_json=json.dumps(seed_targets),
                 is_active=True,
                 activated_at=now,
             ))
-            # Log della prima attivazione
             db.add(StrategyHistory(
                 strategy_name="Predefinita",
                 activated_at=now,
+            ))
+
+            # Template pronti all'uso (non attivi)
+            db.add(Strategy(
+                name="Aggressiva 20Y",
+                description="Orizzonte lungo, forte azionario",
+                targets_json=json.dumps({
+                    "world": 75, "em": 15, "gold": 5,
+                    "bond13": 0, "bond710": 0, "cash": 5,
+                }),
+            ))
+            db.add(Strategy(
+                name="Moderata 10Y",
+                description="Bilanciata, orizzonte medio",
+                targets_json=json.dumps({
+                    "world": 50, "em": 10, "gold": 10,
+                    "bond13": 15, "bond710": 5, "cash": 10,
+                }),
+            ))
+            db.add(Strategy(
+                name="Pre-pensione",
+                description="Conservativa, alta liquidita e bond",
+                targets_json=json.dumps({
+                    "world": 30, "em": 5, "gold": 10,
+                    "bond13": 25, "bond710": 10, "cash": 20,
+                }),
             ))
             db.commit()
     finally:

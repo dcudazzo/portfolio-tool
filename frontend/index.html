@@ -593,7 +593,8 @@
       <button class="btn" style="margin-top:16px;" onclick="saveSettings()">Salva modifiche</button>
     </div>
     <div class="card">
-      <div class="card-title">Target allocation (%)</div>
+      <div class="card-title" id="target-card-title">Target strategia attiva (%)</div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:16px" id="target-card-subtitle">Modifica i target della strategia attiva. Le modifiche verranno salvate sia sugli ETF sia sulla strategia.</div>
       <div id="target-editor"></div>
       <div class="target-sum" id="target-sum"></div>
       <button class="btn" style="margin-top:16px;" onclick="saveTargets()">Salva target</button>
@@ -955,6 +956,13 @@ function renderSettings() {
       </div>
     </div>
   `).join('');
+
+  // Titolo card target: mostra il nome della strategia attiva
+  const activeStrat = strategies.find(s => s.is_active);
+  const titleEl = document.getElementById('target-card-title');
+  if (titleEl && activeStrat) {
+    titleEl.textContent = `Target — ${activeStrat.name} (%)`;
+  }
 
   // Target editor
   const te = document.getElementById('target-editor');
