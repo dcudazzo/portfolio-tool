@@ -4,13 +4,15 @@ from datetime import datetime, timezone
 
 from fastapi import FastAPI, Depends, HTTPException, Query
 from fastapi.staticfiles import StaticFiles
+from sqlalchemy import text, inspect
 from sqlalchemy.orm import Session
 
 from database import engine, get_db, Base
-from models import ETF, Cash, Snapshot, Strategy, StrategyHistory
+from models import Asset, Cash, Snapshot, Strategy, StrategyHistory
 from schemas import (
-    ETFUpdate,
-    ETFOut,
+    AssetCreate,
+    AssetUpdate,
+    AssetOut,
     CashUpdate,
     CashOut,
     PortfolioOut,
@@ -24,18 +26,27 @@ from schemas import (
     StrategyUpdate,
     StrategyOut,
     StrategyHistoryOut,
+    PriceUpdateResult,
+    PriceUpdateOut,
+    TickerSearchResult,
 )
 
-app = FastAPI(title="Portfolio Tracker", version="1.0.0")
+app = FastAPI(title="Portfolio Tracker", version="1.3.0")
 
 # ---------------------------------------------------------------------------
-# Startup: create tables & seed data
+# Tipi di asset ammessi
+# ---------------------------------------------------------------------------
+ASSET_TYPES = {"etf", "etc", "azione", "crypto", "obbligazione"}
+
+# ---------------------------------------------------------------------------
+# Startup: migrate, create tables & seed data
 # ---------------------------------------------------------------------------
 SEED_DATA = [
     {
         "id": "world",
         "name": "MSCI AC World",
         "ticker": "Xtrackers MSCI AC World Scr. UCITS ETF 1C",
+        "type": "etf",
         "qty": 211,
         "pmc": 40.0320,
         "price": 44.6650,
@@ -45,6 +56,7 @@ SEED_DATA = [
         "id": "em",
         "name": "Emerging Markets",
         "ticker": "Xtrackers MSCI Emerging Markets UCITS ETF 1C",
+        "type": "etf",
         "qty": 15,
         "pmc": 64.4460,
         "price": 71.7520,
@@ -54,6 +66,7 @@ SEED_DATA = [
         "id": "gold",
         "name": "Gold ETC",
         "ticker": "Invesco Physical Gold ETC",
+        "type": "etc",
         "qty": 2,
         "pmc": 272.0300,
         "price": 409.0900,
@@ -63,6 +76,7 @@ SEED_DATA = [
         "id": "bond13",
         "name": "Bond 1-3Y",
         "ticker": "iShares EUR Govt Bond 1-3yr UCITS ETF EUR (Acc)",
+        "type": "etf",
         "qty": 32,
         "pmc": 114.0963,
         "price": 116.4300,
@@ -72,6 +86,7 @@ SEED_DATA = [
         "id": "bond710",
         "name": "Bond 7-10Y",
         "ticker": "Amundi Euro Government Bond 7-10Y UCITS ETF Acc",
+        "type": "etf",
         "qty": 17,
         "pmc": 166.2000,
         "price": 172.4300,
@@ -80,16 +95,33 @@ SEED_DATA = [
 ]
 
 
+def _migrate_etfs_to_assets():
+    """Migra la tabella 'etfs' in 'assets' se necessario (aggiunta v1.3)."""
+    inspector = inspect(engine)
+    tables = inspector.get_table_names()
+
+    if "etfs" in tables and "assets" not in tables:
+        with engine.begin() as conn:
+            conn.execute(text("ALTER TABLE etfs RENAME TO assets"))
+            conn.execute(text("ALTER TABLE assets ADD COLUMN type TEXT DEFAULT 'etf'"))
+            conn.execute(text("ALTER TABLE assets ADD COLUMN isin TEXT"))
+            conn.execute(text("ALTER TABLE assets ADD COLUMN yahoo_ticker TEXT"))
+            conn.execute(text("UPDATE assets SET type = 'etc' WHERE id = 'gold'"))
+
+
 @app.on_event("startup")
 def startup():
     """Crea le tabelle e inserisce i dati iniziali al primo avvio."""
+    # Migrazione etfs → assets (prima di create_all)
+    _migrate_etfs_to_assets()
+
     Base.metadata.create_all(bind=engine)
     db = next(get_db())
     try:
-        # Seed ETF
-        if db.query(ETF).count() == 0:
+        # Seed Asset
+        if db.query(Asset).count() == 0:
             for item in SEED_DATA:
-                db.add(ETF(**item))
+                db.add(Asset(**item))
             db.commit()
 
         # Seed Cash
@@ -138,21 +170,24 @@ def startup():
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-def _build_etf_out(etf: ETF, total_value: float) -> ETFOut:
-    value = round(etf.price * etf.qty, 2)
-    invested = round(etf.pmc * etf.qty, 2)
+def _build_asset_out(asset: Asset, total_value: float) -> AssetOut:
+    value = round(asset.price * asset.qty, 2)
+    invested = round(asset.pmc * asset.qty, 2)
     gain_eur = round(value - invested, 2)
     gain_pct = round((gain_eur / invested * 100) if invested else 0, 2)
     weight_pct = round((value / total_value * 100) if total_value else 0, 2)
-    delta_pct = round(weight_pct - etf.target_pct, 2)
-    return ETFOut(
-        id=etf.id,
-        name=etf.name,
-        ticker=etf.ticker,
-        qty=etf.qty,
-        pmc=etf.pmc,
-        price=etf.price,
-        target_pct=etf.target_pct,
+    delta_pct = round(weight_pct - asset.target_pct, 2)
+    return AssetOut(
+        id=asset.id,
+        name=asset.name,
+        ticker=asset.ticker,
+        yahoo_ticker=asset.yahoo_ticker,
+        isin=asset.isin,
+        type=asset.type or "etf",
+        qty=asset.qty,
+        pmc=asset.pmc,
+        price=asset.price,
+        target_pct=asset.target_pct,
         value=value,
         gain_eur=gain_eur,
         gain_pct=gain_pct,
@@ -172,15 +207,15 @@ def _get_cash(db: Session) -> Cash:
 
 
 def _total_value(db: Session) -> float:
-    etfs = db.query(ETF).all()
+    assets = db.query(Asset).all()
     cash = _get_cash(db)
-    return sum(e.price * e.qty for e in etfs) + cash.amount
+    return sum(a.price * a.qty for a in assets) + cash.amount
 
 
 def _total_invested(db: Session) -> float:
-    etfs = db.query(ETF).all()
+    assets = db.query(Asset).all()
     cash = _get_cash(db)
-    return sum(e.pmc * e.qty for e in etfs) + cash.amount
+    return sum(a.pmc * a.qty for a in assets) + cash.amount
 
 
 # ---------------------------------------------------------------------------
@@ -188,18 +223,18 @@ def _total_invested(db: Session) -> float:
 # ---------------------------------------------------------------------------
 @app.get("/api/portfolio", response_model=PortfolioOut)
 def get_portfolio(db: Session = Depends(get_db)):
-    etfs = db.query(ETF).all()
+    assets = db.query(Asset).all()
     cash = _get_cash(db)
-    etf_val = sum(e.price * e.qty for e in etfs)
-    total_val = etf_val + cash.amount
-    total_inv = sum(e.pmc * e.qty for e in etfs) + cash.amount
+    asset_val = sum(a.price * a.qty for a in assets)
+    total_val = asset_val + cash.amount
+    total_inv = sum(a.pmc * a.qty for a in assets) + cash.amount
     gain_eur = round(total_val - total_inv, 2)
     gain_pct = round((gain_eur / total_inv * 100) if total_inv else 0, 2)
 
     cash_weight = round((cash.amount / total_val * 100) if total_val else 0, 2)
 
     return PortfolioOut(
-        etfs=[_build_etf_out(e, total_val) for e in etfs],
+        etfs=[_build_asset_out(a, total_val) for a in assets],
         liquidity=CashOut(
             amount=cash.amount,
             target_pct=cash.target_pct,
@@ -213,27 +248,96 @@ def get_portfolio(db: Session = Depends(get_db)):
 
 
 # ---------------------------------------------------------------------------
-# PUT /api/etf/{id}
+# POST /api/assets — Aggiunge un nuovo strumento
 # ---------------------------------------------------------------------------
-@app.put("/api/etf/{etf_id}", response_model=ETFOut)
-def update_etf(etf_id: str, data: ETFUpdate, db: Session = Depends(get_db)):
-    etf = db.query(ETF).filter(ETF.id == etf_id).first()
-    if not etf:
-        raise HTTPException(status_code=404, detail="ETF not found")
+@app.post("/api/assets", response_model=AssetOut, status_code=201)
+def create_asset(data: AssetCreate, db: Session = Depends(get_db)):
+    if data.type not in ASSET_TYPES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Tipo non valido. Ammessi: {', '.join(sorted(ASSET_TYPES))}",
+        )
+    if db.query(Asset).filter(Asset.id == data.id).first():
+        raise HTTPException(status_code=400, detail=f"Esiste gia' un asset con id '{data.id}'")
 
-    if data.price is not None:
-        etf.price = data.price
-    if data.pmc is not None:
-        etf.pmc = data.pmc
-    if data.qty is not None:
-        etf.qty = data.qty
-
-    etf.updated_at = datetime.now(timezone.utc)
+    asset = Asset(
+        id=data.id,
+        name=data.name,
+        ticker=data.ticker,
+        yahoo_ticker=data.yahoo_ticker,
+        isin=data.isin,
+        type=data.type,
+        qty=data.qty,
+        pmc=data.pmc,
+        price=data.price,
+        target_pct=data.target_pct,
+    )
+    db.add(asset)
     db.commit()
-    db.refresh(etf)
+    db.refresh(asset)
 
     total_val = _total_value(db)
-    return _build_etf_out(etf, total_val)
+    return _build_asset_out(asset, total_val)
+
+
+# ---------------------------------------------------------------------------
+# PUT /api/assets/{id}
+# ---------------------------------------------------------------------------
+@app.put("/api/assets/{asset_id}", response_model=AssetOut)
+def update_asset(asset_id: str, data: AssetUpdate, db: Session = Depends(get_db)):
+    asset = db.query(Asset).filter(Asset.id == asset_id).first()
+    if not asset:
+        raise HTTPException(status_code=404, detail="Asset not found")
+
+    if data.price is not None:
+        asset.price = data.price
+    if data.pmc is not None:
+        asset.pmc = data.pmc
+    if data.qty is not None:
+        asset.qty = data.qty
+    if data.yahoo_ticker is not None:
+        asset.yahoo_ticker = data.yahoo_ticker
+    if data.isin is not None:
+        asset.isin = data.isin
+    if data.type is not None:
+        if data.type not in ASSET_TYPES:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Tipo non valido. Ammessi: {', '.join(sorted(ASSET_TYPES))}",
+            )
+        asset.type = data.type
+
+    asset.updated_at = datetime.now(timezone.utc)
+    db.commit()
+    db.refresh(asset)
+
+    total_val = _total_value(db)
+    return _build_asset_out(asset, total_val)
+
+
+# ---------------------------------------------------------------------------
+# DELETE /api/assets/{id}
+# ---------------------------------------------------------------------------
+@app.delete("/api/assets/{asset_id}")
+def delete_asset(asset_id: str, db: Session = Depends(get_db)):
+    asset = db.query(Asset).filter(Asset.id == asset_id).first()
+    if not asset:
+        raise HTTPException(status_code=404, detail="Asset not found")
+
+    # Protezione: non eliminare l'ultimo asset
+    if db.query(Asset).count() <= 1:
+        raise HTTPException(status_code=400, detail="Non puoi eliminare l'ultimo asset")
+
+    # Pulisci la chiave dalle strategie
+    for strategy in db.query(Strategy).all():
+        targets = json.loads(strategy.targets_json)
+        if asset_id in targets:
+            del targets[asset_id]
+            strategy.targets_json = json.dumps(targets)
+
+    db.delete(asset)
+    db.commit()
+    return {"status": "ok"}
 
 
 # ---------------------------------------------------------------------------
@@ -260,7 +364,7 @@ def update_cash(data: CashUpdate, db: Session = Depends(get_db)):
 # ---------------------------------------------------------------------------
 @app.put("/api/targets")
 def update_targets(data: TargetsUpdate, db: Session = Depends(get_db)):
-    """Aggiorna i target sugli ETF/Cash e sincronizza la strategia attiva."""
+    """Aggiorna i target sugli Asset/Cash e sincronizza la strategia attiva."""
     total = sum(data.targets.values())
     if abs(total - 100) > 0.01:
         raise HTTPException(
@@ -268,17 +372,17 @@ def update_targets(data: TargetsUpdate, db: Session = Depends(get_db)):
             detail=f"I target devono sommare a 100%. Attuale: {total}%",
         )
 
-    # Aggiorna i target sui singoli ETF e Cash
+    # Aggiorna i target sui singoli Asset e Cash
     for key, pct in data.targets.items():
         if key == "cash":
             cash = _get_cash(db)
             cash.target_pct = pct
             cash.updated_at = datetime.now(timezone.utc)
         else:
-            etf = db.query(ETF).filter(ETF.id == key).first()
-            if etf:
-                etf.target_pct = pct
-                etf.updated_at = datetime.now(timezone.utc)
+            asset = db.query(Asset).filter(Asset.id == key).first()
+            if asset:
+                asset.target_pct = pct
+                asset.updated_at = datetime.now(timezone.utc)
 
     # Sincronizza con la strategia attiva (se esiste)
     active = db.query(Strategy).filter(Strategy.is_active == True).first()
@@ -294,19 +398,19 @@ def update_targets(data: TargetsUpdate, db: Session = Depends(get_db)):
 # ---------------------------------------------------------------------------
 @app.get("/api/rebalance", response_model=RebalanceOut)
 def get_rebalance(amount: float = Query(..., gt=0), db: Session = Depends(get_db)):
-    etfs = db.query(ETF).all()
+    assets = db.query(Asset).all()
     cash = _get_cash(db)
-    etf_total = sum(e.price * e.qty for e in etfs)
-    current_total = etf_total + cash.amount
+    asset_total = sum(a.price * a.qty for a in assets)
+    current_total = asset_total + cash.amount
     future_total = current_total + amount
 
-    # Calculate gaps (only for ETFs with target > 0)
+    # Calculate gaps (only for assets with target > 0)
     gaps = []
-    for e in etfs:
-        target_val = future_total * (e.target_pct / 100)
-        current_val = e.price * e.qty
+    for a in assets:
+        target_val = future_total * (a.target_pct / 100)
+        current_val = a.price * a.qty
         gap = max(0, target_val - current_val)
-        gaps.append({"etf": e, "target_val": target_val, "gap": gap})
+        gaps.append({"asset": a, "target_val": target_val, "gap": gap})
 
     total_gap = sum(g["gap"] for g in gaps)
 
@@ -314,18 +418,18 @@ def get_rebalance(amount: float = Query(..., gt=0), db: Session = Depends(get_db
     total_spent = 0
 
     for g in gaps:
-        e = g["etf"]
-        if e.target_pct == 0 or g["gap"] <= 0:
+        a = g["asset"]
+        if a.target_pct == 0 or g["gap"] <= 0:
             plan.append(
                 RebalancePlanItem(
-                    id=e.id,
-                    name=e.name,
+                    id=a.id,
+                    name=a.name,
                     invest_eur=0,
                     shares_to_buy=0,
                     actual_spend=0,
-                    price_per_share=e.price,
+                    price_per_share=a.price,
                     weight_after_pct=round(
-                        (e.price * e.qty) / future_total * 100, 2
+                        (a.price * a.qty) / future_total * 100, 2
                     ),
                 )
             )
@@ -337,28 +441,26 @@ def get_rebalance(amount: float = Query(..., gt=0), db: Session = Depends(get_db
         else:
             invest = 0
 
-        shares = math.floor(invest / e.price) if e.price > 0 else 0
-        actual = round(shares * e.price, 2)
+        shares = math.floor(invest / a.price) if a.price > 0 else 0
+        actual = round(shares * a.price, 2)
         total_spent += actual
 
-        new_val = e.price * e.qty + actual
+        new_val = a.price * a.qty + actual
         weight_after = round(new_val / future_total * 100, 2)
 
         plan.append(
             RebalancePlanItem(
-                id=e.id,
-                name=e.name,
+                id=a.id,
+                name=a.name,
                 invest_eur=round(invest, 2),
                 shares_to_buy=shares,
                 actual_spend=actual,
-                price_per_share=e.price,
+                price_per_share=a.price,
                 weight_after_pct=weight_after,
             )
         )
 
     leftover = round(amount - total_spent, 2)
-    # Cash target allocation for the future total
-    cash_target_val = future_total * (cash.target_pct / 100) if cash.target_pct > 0 else 0
     liquidity_after = round(cash.amount + leftover, 2)
 
     return RebalanceOut(
@@ -388,17 +490,17 @@ def _strategy_to_out(s: Strategy) -> StrategyOut:
 
 
 def _apply_strategy_targets(db: Session, targets: dict):
-    """Copia i target di una strategia sugli ETF e Cash (li rende attivi)."""
+    """Copia i target di una strategia sugli Asset e Cash (li rende attivi)."""
     for key, pct in targets.items():
         if key == "cash":
             cash = _get_cash(db)
             cash.target_pct = pct
             cash.updated_at = datetime.now(timezone.utc)
         else:
-            etf = db.query(ETF).filter(ETF.id == key).first()
-            if etf:
-                etf.target_pct = pct
-                etf.updated_at = datetime.now(timezone.utc)
+            asset = db.query(Asset).filter(Asset.id == key).first()
+            if asset:
+                asset.target_pct = pct
+                asset.updated_at = datetime.now(timezone.utc)
 
 
 # ---------------------------------------------------------------------------
@@ -467,7 +569,7 @@ def update_strategy(strategy_id: int, data: StrategyUpdate, db: Session = Depend
                 detail=f"I target devono sommare a 100%. Attuale: {total}%",
             )
         s.targets_json = json.dumps(data.targets)
-        # Se e' la strategia attiva, aggiorna anche ETF/Cash
+        # Se e' la strategia attiva, aggiorna anche Asset/Cash
         if s.is_active:
             _apply_strategy_targets(db, data.targets)
 
@@ -497,7 +599,7 @@ def delete_strategy(strategy_id: int, db: Session = Depends(get_db)):
 # ---------------------------------------------------------------------------
 @app.post("/api/strategies/{strategy_id}/activate", response_model=StrategyOut)
 def activate_strategy(strategy_id: int, db: Session = Depends(get_db)):
-    """Attiva una strategia: copia i suoi target sugli ETF/Cash e logga l'attivazione."""
+    """Attiva una strategia: copia i suoi target sugli Asset/Cash e logga l'attivazione."""
     s = db.query(Strategy).filter(Strategy.id == strategy_id).first()
     if not s:
         raise HTTPException(status_code=404, detail="Strategia non trovata")
@@ -511,7 +613,7 @@ def activate_strategy(strategy_id: int, db: Session = Depends(get_db)):
     s.is_active = True
     s.activated_at = now
 
-    # Copia i target della strategia sugli ETF e Cash
+    # Copia i target della strategia sugli Asset e Cash
     targets = json.loads(s.targets_json)
     _apply_strategy_targets(db, targets)
 
@@ -573,17 +675,17 @@ def delete_snapshot(snapshot_id: int, db: Session = Depends(get_db)):
 # ---------------------------------------------------------------------------
 @app.get("/api/summary", response_model=SummaryOut)
 def get_summary(db: Session = Depends(get_db)):
-    etfs = db.query(ETF).all()
+    assets = db.query(Asset).all()
     cash = _get_cash(db)
-    etf_val = sum(e.price * e.qty for e in etfs)
-    total_val = etf_val + cash.amount
-    total_inv = sum(e.pmc * e.qty for e in etfs) + cash.amount
+    asset_val = sum(a.price * a.qty for a in assets)
+    total_val = asset_val + cash.amount
+    total_inv = sum(a.pmc * a.qty for a in assets) + cash.amount
     gain_eur = round(total_val - total_inv, 2)
     gain_pct = round((gain_eur / total_inv * 100) if total_inv else 0, 2)
 
-    weights = {e.id: round((e.price * e.qty) / total_val * 100, 2) if total_val else 0 for e in etfs}
+    weights = {a.id: round((a.price * a.qty) / total_val * 100, 2) if total_val else 0 for a in assets}
     weights["cash"] = round((cash.amount / total_val * 100) if total_val else 0, 2)
-    targets = {e.id: e.target_pct for e in etfs}
+    targets = {a.id: a.target_pct for a in assets}
     targets["cash"] = cash.target_pct
 
     return SummaryOut(
@@ -595,6 +697,127 @@ def get_summary(db: Session = Depends(get_db)):
         weights=weights,
         targets=targets,
     )
+
+
+# ---------------------------------------------------------------------------
+# POST /api/prices/update — Aggiorna prezzi via Yahoo Finance
+# ---------------------------------------------------------------------------
+@app.post("/api/prices/update", response_model=PriceUpdateOut)
+def update_prices(db: Session = Depends(get_db)):
+    """Aggiorna i prezzi di tutti gli asset che hanno un yahoo_ticker impostato."""
+    try:
+        import yfinance as yf
+    except ImportError:
+        raise HTTPException(
+            status_code=500,
+            detail="yfinance non installato. Esegui: pip install yfinance",
+        )
+
+    assets = db.query(Asset).all()
+    results = []
+    updated = 0
+    skipped = 0
+    errors = 0
+
+    # Ottieni tasso EUR/USD per conversioni
+    eur_usd_rate = None
+
+    for asset in assets:
+        if not asset.yahoo_ticker:
+            results.append(PriceUpdateResult(
+                id=asset.id, name=asset.name,
+                old_price=asset.price, new_price=asset.price,
+                status="skipped",
+            ))
+            skipped += 1
+            continue
+
+        try:
+            ticker = yf.Ticker(asset.yahoo_ticker)
+            info = ticker.fast_info
+            new_price = info.get("lastPrice") or info.get("last_price")
+            currency = info.get("currency", "EUR")
+
+            if new_price is None:
+                raise ValueError("Prezzo non disponibile")
+
+            # Converti in EUR se necessario
+            if currency and currency.upper() != "EUR":
+                if eur_usd_rate is None and currency.upper() == "USD":
+                    try:
+                        fx = yf.Ticker("EURUSD=X")
+                        eur_usd_rate = fx.fast_info.get("lastPrice") or fx.fast_info.get("last_price") or 1.0
+                    except Exception:
+                        eur_usd_rate = 1.0
+
+                if currency.upper() == "USD" and eur_usd_rate:
+                    new_price = new_price / eur_usd_rate
+                elif currency.upper() == "GBP":
+                    try:
+                        fx = yf.Ticker("EURGBP=X")
+                        rate = fx.fast_info.get("lastPrice") or fx.fast_info.get("last_price") or 1.0
+                        new_price = new_price / rate
+                    except Exception:
+                        pass
+
+            new_price = round(new_price, 4)
+            old_price = asset.price
+            asset.price = new_price
+            asset.updated_at = datetime.now(timezone.utc)
+
+            results.append(PriceUpdateResult(
+                id=asset.id, name=asset.name,
+                old_price=old_price, new_price=new_price,
+                status="ok",
+            ))
+            updated += 1
+
+        except Exception as exc:
+            results.append(PriceUpdateResult(
+                id=asset.id, name=asset.name,
+                old_price=asset.price, new_price=asset.price,
+                status="error", error=str(exc),
+            ))
+            errors += 1
+
+    db.commit()
+
+    return PriceUpdateOut(
+        updated=updated, skipped=skipped, errors=errors,
+        results=results,
+    )
+
+
+# ---------------------------------------------------------------------------
+# GET /api/ticker/search?q=... — Ricerca ticker su Yahoo Finance
+# ---------------------------------------------------------------------------
+@app.get("/api/ticker/search", response_model=list[TickerSearchResult])
+def search_ticker(q: str = Query(..., min_length=2)):
+    """Cerca strumenti finanziari su Yahoo Finance per nome o ticker."""
+    try:
+        import yfinance as yf
+    except ImportError:
+        raise HTTPException(
+            status_code=500,
+            detail="yfinance non installato. Esegui: pip install yfinance",
+        )
+
+    try:
+        search = yf.Search(q, max_results=10)
+        quotes = search.quotes if hasattr(search, "quotes") else []
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Errore ricerca Yahoo Finance: {exc}")
+
+    results = []
+    for item in quotes:
+        results.append(TickerSearchResult(
+            symbol=item.get("symbol", ""),
+            name=item.get("shortname") or item.get("longname") or item.get("symbol", ""),
+            exchange=item.get("exchDisp") or item.get("exchange", ""),
+            type=item.get("typeDisp") or item.get("quoteType", ""),
+            currency=item.get("currency", ""),
+        ))
+    return results
 
 
 # ---------------------------------------------------------------------------

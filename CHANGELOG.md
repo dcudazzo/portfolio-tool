@@ -1,5 +1,34 @@
 # Portfolio Tracker — Changelog
 
+## v1.3 — 2026-02-25
+
+### 11.3 Nuovi strumenti e asset class
+- [x] Rinomina tabella `etfs` in `assets` con migrazione automatica al primo avvio
+- [x] Nuovo campo `type` (etf, etc, azione, crypto, obbligazione) con badge colorato nel dashboard
+- [x] Nuovo campo `isin` (opzionale) per codice ISIN
+- [x] Nuovo campo `yahoo_ticker` (opzionale) per aggiornamento prezzi automatico
+- [x] `POST /api/assets` — aggiunge un nuovo strumento con validazione tipo e id unico
+- [x] `DELETE /api/assets/{id}` — elimina strumento (protegge ultimo asset, pulisce strategie)
+- [x] `PUT /api/assets/{id}` — aggiorna prezzo, PMC, qty, yahoo_ticker, isin, tipo
+- [x] Frontend: form "Aggiungi nuovo strumento" nella tab Impostazioni
+- [x] Frontend: pulsante "Elimina" per ogni asset con conferma
+- [x] Frontend: campo "Ticker Yahoo" editabile per ogni asset
+- [x] Frontend: badge tipo (ETF/ETC/AZ/CRYPTO/OBB) nel dashboard e impostazioni
+- [x] Auto-genera id dal nome (slug alfanumerico, max 10 caratteri)
+- [x] Migrazione: gold automaticamente impostato come tipo "etc"
+
+### 11.4 Yahoo Finance (parziale)
+- [x] Nuova dipendenza `yfinance` in requirements.txt
+- [x] `POST /api/prices/update` — aggiorna prezzi via Yahoo Finance per tutti gli asset con yahoo_ticker
+- [x] Conversione automatica USD/GBP in EUR tramite tassi di cambio yfinance
+- [x] `GET /api/ticker/search?q=...` — ricerca strumenti su Yahoo Finance (ETF, azioni, crypto, futures)
+- [x] Schema `TickerSearchResult` (symbol, name, exchange, type, currency)
+- [x] Frontend: pulsante "Aggiorna prezzi" nell'header
+- [x] Frontend: toast con risultato aggiornamento (aggiornati/saltati/errori)
+- [x] Frontend: indicatore "Ultimo aggiornamento" sotto il totale
+- [x] Frontend: barra di ricerca ticker nel form "Aggiungi nuovo strumento"
+- [x] Frontend: click su risultato compila automaticamente nome, ticker, yahoo_ticker e tipo
+
 ## v1.2 — 2026-02-22
 
 ### 11.1 Gestione strategia dinamica
@@ -82,13 +111,10 @@
 
 ### ~~11.2 Gestione liquidita~~ (completato in v1.1)
 
-### 11.3 Nuovi strumenti e asset class
-- [ ] Aggiunta dinamica di nuovi ETF/asset class dall'interfaccia (nome, ticker, ISIN, PMC, qty)
-- [ ] Supporto per asset class non-ETF: azioni singole, obbligazioni dirette, crypto, immobiliare
-- [ ] Campo "tipo" per ogni strumento (ETF, ETC, azione, crypto, liquidita) con icone differenziate
+### ~~11.3 Nuovi strumenti e asset class~~ (completato in v1.3)
 
 ### 11.4 Altre evoluzioni
-- [ ] Importazione automatica prezzi tramite API Yahoo Finance (aggiornamento con un click)
+- [x] ~~Importazione automatica prezzi tramite API Yahoo Finance (aggiornamento con un click)~~ (completato in v1.3)
 - [ ] Alert su Telegram quando un ETF supera soglia di deviazione dal target (es. +/-5%)
 - [ ] Calcolo TWR (Time-Weighted Return) per performance corretta dai flussi di cassa
 - [ ] Export CSV/PDF del report periodico con snapshot e riepilogo ribilanciamenti

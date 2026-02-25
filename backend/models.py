@@ -3,12 +3,15 @@ from sqlalchemy import Column, String, Float, Integer, DateTime, Text, Boolean
 from database import Base
 
 
-class ETF(Base):
-    __tablename__ = "etfs"
+class Asset(Base):
+    __tablename__ = "assets"
 
     id = Column(String, primary_key=True, index=True)
     name = Column(Text, nullable=False)
     ticker = Column(Text, nullable=False)
+    yahoo_ticker = Column(Text, nullable=True)
+    isin = Column(Text, nullable=True)
+    type = Column(Text, nullable=False, default="etf")
     qty = Column(Float, nullable=False, default=0)
     pmc = Column(Float, nullable=False, default=0)
     price = Column(Float, nullable=False, default=0)

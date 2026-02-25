@@ -3,17 +3,36 @@ from pydantic import BaseModel
 from typing import Optional
 
 
-# --- ETF ---
-class ETFUpdate(BaseModel):
-    price: Optional[float] = None
-    pmc: Optional[float] = None
-    qty: Optional[float] = None
-
-
-class ETFOut(BaseModel):
+# --- Asset (ex ETF) ---
+class AssetCreate(BaseModel):
     id: str
     name: str
     ticker: str
+    yahoo_ticker: Optional[str] = None
+    isin: Optional[str] = None
+    type: str = "etf"
+    qty: float = 0
+    pmc: float = 0
+    price: float = 0
+    target_pct: float = 0
+
+
+class AssetUpdate(BaseModel):
+    price: Optional[float] = None
+    pmc: Optional[float] = None
+    qty: Optional[float] = None
+    yahoo_ticker: Optional[str] = None
+    isin: Optional[str] = None
+    type: Optional[str] = None
+
+
+class AssetOut(BaseModel):
+    id: str
+    name: str
+    ticker: str
+    yahoo_ticker: Optional[str] = None
+    isin: Optional[str] = None
+    type: str
     qty: float
     pmc: float
     price: float
@@ -44,7 +63,7 @@ class CashOut(BaseModel):
 
 
 class PortfolioOut(BaseModel):
-    etfs: list[ETFOut]
+    etfs: list[AssetOut]
     liquidity: CashOut
     total_value: float
     total_invested: float
@@ -142,3 +161,31 @@ class StrategyHistoryOut(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+# --- Price update (Yahoo Finance) ---
+
+class PriceUpdateResult(BaseModel):
+    id: str
+    name: str
+    old_price: float
+    new_price: float
+    status: str             # "ok", "skipped", "error"
+    error: Optional[str] = None
+
+
+class PriceUpdateOut(BaseModel):
+    updated: int
+    skipped: int
+    errors: int
+    results: list[PriceUpdateResult]
+
+
+# --- Ticker search (Yahoo Finance) ---
+
+class TickerSearchResult(BaseModel):
+    symbol: str
+    name: str
+    exchange: str
+    type: str           # "ETF", "Equity", "Cryptocurrency", ...
+    currency: str = ""

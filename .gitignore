@@ -5,3 +5,6 @@ __pycache__/
 venv/
 .env
 portfolio-tracker.html
+backend/nul
+backend/portfolio.db.bak
+frontend/index.html
