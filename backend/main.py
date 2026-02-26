@@ -2,13 +2,14 @@ import json
 import math
 from datetime import datetime, timezone
 
+from apscheduler.schedulers.background import BackgroundScheduler
 from fastapi import FastAPI, Depends, HTTPException, Query
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text, inspect
 from sqlalchemy.orm import Session
 
 from database import engine, get_db, Base
-from models import Asset, Cash, Snapshot, Strategy, StrategyHistory
+from models import Asset, Cash, Snapshot, Strategy, StrategyHistory, RebalanceLog
 from schemas import (
     AssetCreate,
     AssetUpdate,
@@ -19,6 +20,8 @@ from schemas import (
     TargetsUpdate,
     RebalanceOut,
     RebalancePlanItem,
+    RebalanceLogCreate,
+    RebalanceLogOut,
     SnapshotCreate,
     SnapshotOut,
     SummaryOut,
@@ -31,7 +34,8 @@ from schemas import (
     TickerSearchResult,
 )
 
-app = FastAPI(title="Portfolio Tracker", version="1.3.0")
+app = FastAPI(title="Portfolio Tracker", version="1.4.0")
+_scheduler = BackgroundScheduler()
 
 # ---------------------------------------------------------------------------
 # Tipi di asset ammessi
@@ -111,7 +115,7 @@ def _migrate_etfs_to_assets():
 
 @app.on_event("startup")
 def startup():
-    """Crea le tabelle e inserisce i dati iniziali al primo avvio."""
+    """Crea le tabelle, inserisce i dati iniziali e avvia lo scheduler."""
     # Migrazione etfs → assets (prima di create_all)
     _migrate_etfs_to_assets()
 
@@ -165,6 +169,25 @@ def startup():
         db.commit()
     finally:
         db.close()
+
+    # Avvia lo scheduler per l'aggiornamento prezzi automatico
+    def _scheduled_price_update():
+        db = next(get_db())
+        try:
+            _do_price_update(db)
+        except Exception as exc:
+            print(f"[scheduler] Errore auto-update prezzi: {exc}")
+        finally:
+            db.close()
+
+    _scheduler.add_job(_scheduled_price_update, "cron", hour=9, minute=0)
+    _scheduler.start()
+    print("[scheduler] Avviato — auto-update prezzi ogni giorno alle 09:00")
+
+
+@app.on_event("shutdown")
+def shutdown():
+    _scheduler.shutdown(wait=False)
 
 
 # ---------------------------------------------------------------------------
@@ -702,16 +725,12 @@ def get_summary(db: Session = Depends(get_db)):
 # ---------------------------------------------------------------------------
 # POST /api/prices/update — Aggiorna prezzi via Yahoo Finance
 # ---------------------------------------------------------------------------
-@app.post("/api/prices/update", response_model=PriceUpdateOut)
-def update_prices(db: Session = Depends(get_db)):
-    """Aggiorna i prezzi di tutti gli asset che hanno un yahoo_ticker impostato."""
+def _do_price_update(db: Session) -> PriceUpdateOut:
+    """Aggiorna i prezzi di tutti gli asset con yahoo_ticker. Usato dall'endpoint e dallo scheduler."""
     try:
         import yfinance as yf
     except ImportError:
-        raise HTTPException(
-            status_code=500,
-            detail="yfinance non installato. Esegui: pip install yfinance",
-        )
+        raise RuntimeError("yfinance non installato. Esegui: pip install yfinance")
 
     assets = db.query(Asset).all()
     results = []
@@ -786,6 +805,64 @@ def update_prices(db: Session = Depends(get_db)):
         updated=updated, skipped=skipped, errors=errors,
         results=results,
     )
+
+
+@app.post("/api/prices/update", response_model=PriceUpdateOut)
+def update_prices(db: Session = Depends(get_db)):
+    """Aggiorna i prezzi di tutti gli asset che hanno un yahoo_ticker impostato."""
+    try:
+        return _do_price_update(db)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+# ---------------------------------------------------------------------------
+# POST /api/rebalance/execute — Salva il ribilanciamento eseguito
+# ---------------------------------------------------------------------------
+@app.post("/api/rebalance/execute", response_model=RebalanceLogOut, status_code=201)
+def execute_rebalance(data: RebalanceLogCreate, db: Session = Depends(get_db)):
+    """Registra il ribilanciamento eseguito nel log storico."""
+    log = RebalanceLog(
+        executed_at=datetime.now(timezone.utc),
+        amount=data.amount,
+        total_spent=data.total_spent,
+        plan_json=json.dumps([item.model_dump() for item in data.plan]),
+    )
+    db.add(log)
+    db.commit()
+    db.refresh(log)
+
+    return RebalanceLogOut(
+        id=log.id,
+        executed_at=log.executed_at,
+        amount=log.amount,
+        total_spent=log.total_spent,
+        plan=[RebalancePlanItem(**item) for item in json.loads(log.plan_json)],
+    )
+
+
+# ---------------------------------------------------------------------------
+# GET /api/rebalance/history — Storico ribilanciamenti
+# ---------------------------------------------------------------------------
+@app.get("/api/rebalance/history", response_model=list[RebalanceLogOut])
+def get_rebalance_history(db: Session = Depends(get_db)):
+    """Restituisce lo storico dei ribilanciamenti (piu' recenti prima, max 50)."""
+    logs = (
+        db.query(RebalanceLog)
+        .order_by(RebalanceLog.executed_at.desc())
+        .limit(50)
+        .all()
+    )
+    return [
+        RebalanceLogOut(
+            id=log.id,
+            executed_at=log.executed_at,
+            amount=log.amount,
+            total_spent=log.total_spent,
+            plan=[RebalancePlanItem(**item) for item in json.loads(log.plan_json)],
+        )
+        for log in logs
+    ]
 
 
 # ---------------------------------------------------------------------------

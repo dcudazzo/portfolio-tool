@@ -1,5 +1,5 @@
 from datetime import datetime
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Optional
 
 
@@ -93,6 +93,23 @@ class RebalanceOut(BaseModel):
     total_spent: float
     leftover: float
     liquidity_after: float
+
+
+class RebalanceLogCreate(BaseModel):
+    amount: float = Field(gt=0)
+    total_spent: float = Field(ge=0)
+    plan: list[RebalancePlanItem]
+
+
+class RebalanceLogOut(BaseModel):
+    id: int
+    executed_at: datetime
+    amount: float
+    total_spent: float
+    plan: list[RebalancePlanItem]
+
+    class Config:
+        from_attributes = True
 
 
 # --- Snapshots ---

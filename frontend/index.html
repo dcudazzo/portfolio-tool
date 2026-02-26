@@ -649,6 +649,11 @@
       </div>
       <div class="rebal-result" id="rebal-result"></div>
       <div class="note-box" id="rebal-note"></div>
+      <button type="button" class="btn" id="btn-execute-rebalance" style="display:none;margin-top:16px;background:var(--green);color:#0a0a0f" onclick="executeRebalance()">&#10003; Esegui e registra</button>
+    </div>
+    <div class="card" id="rebalance-history-card" style="display:none">
+      <div class="card-title">Storico ribilanciamenti</div>
+      <div id="rebalance-history-list"></div>
     </div>
   </div>
 
@@ -681,6 +686,11 @@
 
   <!-- IMPOSTAZIONI -->
   <div id="tab-settings" class="panel">
+
+    <!-- Auto-update prezzi -->
+    <div class="note-box" style="margin-bottom:16px">
+      <strong>Aggiornamento prezzi automatico:</strong> il sistema aggiorna i prezzi di tutti gli strumenti con ticker Yahoo Finance configurato ogni giorno alle <strong>09:00</strong>. Puoi anche aggiornare manualmente dal pannello Dashboard.
+    </div>
 
     <!-- Strategie di allocazione -->
     <div class="card">
@@ -764,9 +774,10 @@ const API_BASE = '/api';
 // -- STATE -------------------------------------------------------------------
 const ETF_COLORS = ['c0','c1','c2','c3','c4','c5','c6','c7'];
 const TYPE_LABELS = { etf: 'ETF', etc: 'ETC', azione: 'AZ', crypto: 'CRYPTO', obbligazione: 'OBB' };
-let portfolio = null;    // cached /api/portfolio response
-let snapshots = [];      // cached /api/snapshots response
-let strategies = [];     // cached /api/strategies response
+let portfolio = null;              // cached /api/portfolio response
+let snapshots = [];                // cached /api/snapshots response
+let strategies = [];               // cached /api/strategies response
+let currentRebalancePlan = null;   // ultimo piano calcolato (v1.4)
 
 // -- UI HELPERS --------------------------------------------------------------
 const fmt = (n, d=0) => {
@@ -836,7 +847,7 @@ function switchTab(name, btn) {
   document.getElementById('tab-' + name).classList.add('active');
   btn.classList.add('active');
   if (name === 'dashboard') loadDashboard();
-  if (name === 'rebalance') { loadDashboard().then(() => calcRebalance()); }
+  if (name === 'rebalance') { loadDashboard().then(() => { calcRebalance(); loadRebalanceHistory(); }); }
   if (name === 'performance') loadPerformance();
   if (name === 'settings') loadSettings();
 }
@@ -968,9 +979,62 @@ async function calcRebalance() {
       ${data.leftover > 0.5 ? `Residuo non investibile per arrotondamento quote: <strong>${fmt(data.leftover, 2)}</strong> &mdash; tienilo sul conto per il prossimo ribilanciamento.<br>` : ''}
       ${data.liquidity_after > 0 ? `Liquidit&agrave; dopo il ribilanciamento: <strong>${fmt(data.liquidity_after, 2)}</strong><br>` : ''}
       Ricorda: gli strumenti con target 0% vengono lasciati diluire naturalmente.`;
+
+    currentRebalancePlan = data;
+    document.getElementById('btn-execute-rebalance').style.display = 'block';
   } catch (e) {
     result.innerHTML = `<div class="empty-state">Errore nel calcolo del ribilanciamento.</div>`;
     note.innerHTML = '';
+    currentRebalancePlan = null;
+    document.getElementById('btn-execute-rebalance').style.display = 'none';
+  }
+}
+
+async function executeRebalance() {
+  if (!currentRebalancePlan) return;
+  showLoading();
+  try {
+    await api('/rebalance/execute', {
+      method: 'POST',
+      body: JSON.stringify({
+        amount: currentRebalancePlan.amount,
+        total_spent: currentRebalancePlan.total_spent,
+        plan: currentRebalancePlan.plan,
+      }),
+    });
+    showToast('Ribilanciamento registrato');
+    currentRebalancePlan = null;
+    document.getElementById('btn-execute-rebalance').style.display = 'none';
+    loadRebalanceHistory();
+  } finally {
+    hideLoading();
+  }
+}
+
+async function loadRebalanceHistory() {
+  try {
+    const logs = await api('/rebalance/history');
+    const card = document.getElementById('rebalance-history-card');
+    const list = document.getElementById('rebalance-history-list');
+
+    if (logs.length === 0) {
+      card.style.display = 'none';
+      return;
+    }
+
+    card.style.display = 'block';
+    list.innerHTML = logs.map(log => {
+      const date = new Date(log.executed_at).toLocaleString('it-IT', { dateStyle: 'short', timeStyle: 'short' });
+      const bought = log.plan.filter(p => p.shares_to_buy > 0);
+      const detail = bought.map(p => `${p.name} ×${p.shares_to_buy}`).join(', ');
+      return `<div class="history-row">
+        <div class="history-date">${date}</div>
+        <div class="history-value">${fmt(log.total_spent, 0)}</div>
+        <div style="font-size:11px;color:var(--muted);grid-column:1/-1;margin-top:2px">${detail || 'Nessun acquisto'}</div>
+      </div>`;
+    }).join('');
+  } catch (_) {
+    // storico non critico, ignora errori silenziosamente
   }
 }
 

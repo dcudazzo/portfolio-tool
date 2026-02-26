@@ -3,3 +3,4 @@ uvicorn[standard]==0.34.0
 sqlalchemy==2.0.36
 pydantic==2.10.4
 yfinance>=0.2.54
+apscheduler>=3.10

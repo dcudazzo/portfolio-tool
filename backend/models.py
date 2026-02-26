@@ -74,3 +74,17 @@ class StrategyHistory(Base):
     strategy_name = Column(Text, nullable=False)
     activated_at = Column(DateTime, nullable=False,
                           default=lambda: datetime.now(timezone.utc))
+
+
+class RebalanceLog(Base):
+    """Storico dei ribilanciamenti eseguiti.
+    plan_json contiene la lista degli acquisti (RebalancePlanItem) serializzata.
+    """
+    __tablename__ = "rebalance_logs"
+
+    id          = Column(Integer, primary_key=True, autoincrement=True)
+    executed_at = Column(DateTime, nullable=False,
+                         default=lambda: datetime.now(timezone.utc))
+    amount      = Column(Float, nullable=False)
+    total_spent = Column(Float, nullable=False)
+    plan_json   = Column(Text, nullable=False)
